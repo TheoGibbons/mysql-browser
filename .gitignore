@@ -1,0 +1,14 @@
+node_modules/
+out/
+release/
+dist/
+*.log
+.DS_Store
+scratch-*
+
+# IDE
+.idea/
+.vscode/
+
+# Reference screenshots — not part of the source tree
+ref_images/

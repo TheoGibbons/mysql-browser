@@ -1,0 +1,4 @@
+# Normalise to LF in the repository; the working tree keeps the platform default.
+* text=auto eol=lf
+*.png binary
+*.ico binary
