@@ -1045,6 +1045,122 @@ textarea.field {
   cursor: pointer;
 }
 
+/* --- full-range colour picker --- */
+
+.color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.cp-sv {
+  position: relative;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.cp-sv-thumb {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.cp-hue {
+  position: relative;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  touch-action: none;
+  background: linear-gradient(
+    to right,
+    #f00 0%,
+    #ff0 17%,
+    #0f0 33%,
+    #0ff 50%,
+    #00f 67%,
+    #f0f 83%,
+    #f00 100%
+  );
+}
+
+.cp-hue-thumb {
+  position: absolute;
+  top: -2px;
+  width: 6px;
+  height: calc(100% + 4px);
+  border-radius: 3px;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.cp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cp-preview {
+  width: 24px;
+  height: 22px;
+  flex: none;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Checkerboard shows through when there is no colour. */
+  background-image: linear-gradient(45deg, #ccc 25%, transparent 25%),
+    linear-gradient(-45deg, #ccc 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #ccc 75%),
+    linear-gradient(-45deg, transparent 75%, #ccc 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+
+.cp-none-x {
+  color: #888;
+  font-size: 12px;
+}
+
+.cp-hex {
+  width: 92px;
+  font-family: var(--font-mono);
+  text-transform: lowercase;
+}
+
+.cp-presets {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.cp-preset {
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: 3px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.cp-preset:hover {
+  border-color: #1b1b1b;
+}
+
 /* ------------------------------------------------------------ home page */
 
 .home {

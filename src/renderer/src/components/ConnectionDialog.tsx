@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import type { ConnectionConfig, ConnectionMethod } from '@shared/types'
 import { Modal } from './ui/Modal'
+import { ColorPicker } from './ui/ColorPicker'
 import { newId } from '../lib/ids'
-import { CONNECTION_COLORS, isValidHex, readableTextColor } from '../lib/color'
 
 const METHOD_LABELS: Record<ConnectionMethod, string> = {
   tcp: 'Standard (TCP/IP)',
@@ -340,43 +340,8 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
       <fieldset className="group" style={{ marginBottom: 0 }}>
         <legend>Appearance & Safety</legend>
         <div className="prefs-grid">
-          <label>Colour:</label>
-          <div className="row" style={{ gap: 5, flexWrap: 'wrap' }}>
-            {CONNECTION_COLORS.map((swatch) => (
-              <button
-                key={swatch.value}
-                type="button"
-                title={swatch.name}
-                className="color-swatch"
-                style={{
-                  background: swatch.value,
-                  outline: config.color === swatch.value ? '2px solid #1b1b1b' : undefined,
-                  outlineOffset: 1
-                }}
-                onClick={() => patch({ color: swatch.value })}
-              >
-                {config.color === swatch.value && (
-                  <span style={{ color: readableTextColor(swatch.value), fontSize: 11 }}>✓</span>
-                )}
-              </button>
-            ))}
-            <input
-              type="color"
-              className="color-native"
-              title="Custom colour"
-              value={isValidHex(config.color) ? config.color : '#c0392b'}
-              onChange={(e) => patch({ color: e.target.value })}
-            />
-            <button
-              type="button"
-              className="btn"
-              style={{ minWidth: 0, height: 22, padding: '0 8px' }}
-              onClick={() => patch({ color: '' })}
-              disabled={!config.color}
-            >
-              None
-            </button>
-          </div>
+          <label style={{ alignSelf: 'start', paddingTop: 2 }}>Colour:</label>
+          <ColorPicker value={config.color ?? ''} onChange={(color) => patch({ color })} />
           <div className="prefs-hint">
             Tints the home card, the connection tab and the query editor. Use red for production so a
             live connection is obvious at a glance.
