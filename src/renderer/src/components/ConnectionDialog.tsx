@@ -309,9 +309,7 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
             value={config.defaultSchema ?? ''}
             onChange={(e) => patch({ defaultSchema: e.target.value })}
           />
-          <span className="hint">
-            The schema to use as default schema. Leave blank to select it later.
-          </span>
+          <span className="hint">The schema to use as default schema. (Optional)</span>
 
           <label>Use SSL:</label>
           <div className="row" style={{ gap: 14 }}>
