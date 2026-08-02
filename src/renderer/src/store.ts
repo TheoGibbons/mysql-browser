@@ -146,6 +146,10 @@ export const useAppStore = create<AppState>((set, get) => {
     dirtyTabs: {},
 
     async init() {
+      // The IPC bridge only exists in the Electron shell; bail out cleanly when
+      // the page is loaded in a plain browser (App renders a notice instead).
+      if (typeof window === 'undefined' || !window.api) return
+
       const [connections, prefs] = await Promise.all([
         window.api.connections.list(),
         window.api.prefs.get()

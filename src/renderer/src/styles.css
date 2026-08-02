@@ -1490,3 +1490,66 @@ table.editgrid input[type='checkbox'] {
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
+
+/* ------------------------------------------------ browser (no-shell) notice */
+
+.browser-notice {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+  overflow: auto;
+}
+
+.browser-notice-card {
+  max-width: 460px;
+  text-align: center;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 28px 30px 24px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+}
+
+.browser-notice-icon {
+  font-size: 40px;
+  line-height: 1;
+  margin-bottom: 10px;
+}
+
+.browser-notice-card h1 {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.browser-notice-card p {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #333;
+}
+
+.browser-notice-how {
+  color: var(--text-dim) !important;
+}
+
+.browser-notice-cmd {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: #1e1e1e;
+  color: #e6e6e6;
+  padding: 9px 12px;
+  border-radius: 4px;
+  margin: 0 0 14px;
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+.browser-notice-foot {
+  font-size: 12px !important;
+  color: var(--text-dim) !important;
+  margin-bottom: 0 !important;
+}
