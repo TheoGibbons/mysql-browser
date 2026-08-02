@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ConnectionConfig, ConnectionMethod } from '@shared/types'
 import { Modal } from './ui/Modal'
-import { ColorPicker } from './ui/ColorPicker'
+import { ColorField } from './ui/ColorField'
 import { newId } from '../lib/ids'
 
 const METHOD_LABELS: Record<ConnectionMethod, string> = {
@@ -340,8 +340,8 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
       <fieldset className="group" style={{ marginBottom: 0 }}>
         <legend>Appearance & Safety</legend>
         <div className="prefs-grid">
-          <label style={{ alignSelf: 'start', paddingTop: 2 }}>Colour:</label>
-          <ColorPicker value={config.color ?? ''} onChange={(color) => patch({ color })} />
+          <label>Colour:</label>
+          <ColorField value={config.color ?? ''} onChange={(color) => patch({ color })} />
           <div className="prefs-hint">
             Tints the home card, the connection tab and the query editor. Use red for production so a
             live connection is obvious at a glance.
