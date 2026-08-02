@@ -941,6 +941,31 @@ table.grid td.editing input {
   white-space: nowrap;
 }
 
+/*
+ * Preferences layout: label + control on one row (label left-aligned), with the
+ * long help text on its own full-width row underneath, so it never forces the
+ * modal to scroll sideways.
+ */
+.prefs-grid {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 10px;
+  align-items: center;
+}
+
+.prefs-grid > label {
+  text-align: left;
+  white-space: nowrap;
+}
+
+.prefs-hint {
+  grid-column: 1 / -1;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  margin: 0 0 8px;
+}
+
 .hint {
   color: var(--text-dim);
   font-size: var(--fs-sm);

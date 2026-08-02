@@ -33,7 +33,7 @@ function NumberField({ label, value, onChange, hint, min = 0, suffix }: NumberFi
         />
         {suffix && <span className="hint">{suffix}</span>}
       </div>
-      <span className="hint">{hint}</span>
+      {hint && <div className="prefs-hint">{hint}</div>}
     </>
   )
 }
@@ -69,7 +69,7 @@ function TextField({ label, value, onChange, hint, browse }: TextFieldProps): JS
           </button>
         )}
       </div>
-      <span className="hint">{hint}</span>
+      {hint && <div className="prefs-hint">{hint}</div>}
     </>
   )
 }
@@ -150,7 +150,7 @@ export function PreferencesDialog({ connection, onClose }: Props): JSX.Element {
 
       <fieldset className="group">
         <legend>General</legend>
-        <div className="form-grid">
+        <div className="prefs-grid">
           <NumberField
             label="Auto-save interval:"
             value={prefs.autoSaveIntervalSec}
@@ -170,7 +170,7 @@ export function PreferencesDialog({ connection, onClose }: Props): JSX.Element {
 
       <fieldset className="group">
         <legend>MySQL Session</legend>
-        <div className="form-grid">
+        <div className="prefs-grid">
           <NumberField
             label="DBMS connection keep-alive interval:"
             value={prefs.keepAliveIntervalSec}
@@ -197,7 +197,7 @@ export function PreferencesDialog({ connection, onClose }: Props): JSX.Element {
 
       <fieldset className="group">
         <legend>Data export and import</legend>
-        <div className="form-grid">
+        <div className="prefs-grid">
           <TextField
             label="Path to mysqldump tool:"
             value={prefs.mysqldumpPath}
@@ -224,7 +224,7 @@ export function PreferencesDialog({ connection, onClose }: Props): JSX.Element {
 
       <fieldset className="group" style={{ marginBottom: 0 }}>
         <legend>Migration</legend>
-        <div className="form-grid">
+        <div className="prefs-grid">
           <NumberField
             label="Migration connection timeout:"
             value={prefs.migrationConnectionTimeoutSec}
