@@ -34,6 +34,20 @@ export interface ConnectionConfig {
   /** Per-connection preference overrides. Unset keys fall back to the global prefs. */
   prefs?: Partial<Preferences>
 
+  /**
+   * Hex colour (e.g. `#cc3333`) that tints the home card, the connection tab
+   * and the query editor — used to make production connections stand out.
+   * Empty/undefined means no colour.
+   */
+  color?: string
+
+  /**
+   * When true, a modifying statement (INSERT/UPDATE/DELETE/DDL) executed from
+   * the editor triggers a loud extra confirmation before it runs. Intended for
+   * production databases.
+   */
+  confirmModifying?: boolean
+
   createdAt: number
 }
 

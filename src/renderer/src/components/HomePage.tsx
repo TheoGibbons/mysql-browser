@@ -5,6 +5,7 @@ import { useContextMenu } from './ui/ContextMenu'
 import { PlusIcon, SearchIcon } from './ui/Icons'
 import { ConnectionDialog } from './ConnectionDialog'
 import { Modal } from './ui/Modal'
+import { isValidHex, readableDimColor, readableTextColor } from '../lib/color'
 
 function endpoint(config: ConnectionConfig): string {
   if (config.method === 'ssh') {
@@ -109,17 +110,33 @@ export function HomePage(): JSX.Element {
         <div className="conn-grid">
           {filtered.map((config) => {
             const badge = methodBadge(config)
+            const colored = isValidHex(config.color)
+            const cardStyle = colored
+              ? {
+                  background: config.color,
+                  borderColor: 'rgba(0,0,0,0.25)',
+                  color: readableTextColor(config.color!)
+                }
+              : undefined
+            const metaStyle = colored ? { color: readableDimColor(config.color!) } : undefined
             return (
               <div
                 key={config.id}
-                className="conn-card"
+                className={`conn-card${colored ? ' colored' : ''}`}
+                style={cardStyle}
                 onDoubleClick={() => void openConnection(config, true)}
                 onContextMenu={(e) => onCardContextMenu(e, config)}
                 title="Double-click to open · right-click for more"
               >
-                <h3>{config.name}</h3>
-                <div className="meta">👤 {config.user || '—'}</div>
-                <div className="meta">🖧 {endpoint(config)}</div>
+                <h3 style={colored ? { color: readableTextColor(config.color!) } : undefined}>
+                  {config.name}
+                </h3>
+                <div className="meta" style={metaStyle}>
+                  👤 {config.user || '—'}
+                </div>
+                <div className="meta" style={metaStyle}>
+                  🖧 {endpoint(config)}
+                </div>
                 {badge && <span className="badge">{badge}</span>}
               </div>
             )

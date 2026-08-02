@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format as formatSql } from 'sql-formatter'
 import type { DesignerState, QueryTabState } from '@shared/types'
-import { statementAt } from '@shared/sql'
+import { hasModifyingStatement, statementAt } from '@shared/sql'
 import { gridKey, useAppStore, useGridStore, type ConnTab, type NewTabOptions } from '../store'
 import { buildApplyPlan, isDirty, toCsv, toJson, toSqlInserts, toTsv, visibleRefs } from '../lib/grid'
+import { isValidHex, tint } from '../lib/color'
 import { SchemaTree } from './SchemaTree'
 import { QueryTabsBar } from './QueryTabsBar'
 import { QueryEditor, type EditorApi } from './QueryEditor'
@@ -12,6 +13,7 @@ import { HistoryView } from './HistoryView'
 import { TableDesigner } from './TableDesigner'
 import { ExportImportTab } from './ExportImportTab'
 import { ApplyChangesModal } from './ApplyChangesModal'
+import { ConfirmModifyModal } from './ConfirmModifyModal'
 import { PreferencesDialog } from './PreferencesDialog'
 import { Splitter } from './ui/Splitter'
 import { useContextMenu } from './ui/ContextMenu'
@@ -62,6 +64,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
     busy: boolean
     error: string | null
   } | null>(null)
+  const [pendingModify, setPendingModify] = useState<{ sql: string } | null>(null)
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
   const isRunning = activeTabId ? !!running[activeTabId] : false
@@ -97,6 +100,16 @@ export function ConnectionView({ conn }: Props): JSX.Element {
 
   // --- execution ----------------------------------------------------------
 
+  const runResolved = useCallback(
+    (sql: string, explain: boolean) => {
+      if (!activeTabId) return
+      // Fresh results invalidate any pending edits on the old ones.
+      resetGrid(gridKey(sessionId, activeTabId))
+      void runQuery(sessionId, activeTabId, sql, { explain })
+    },
+    [activeTabId, resetGrid, runQuery, sessionId]
+  )
+
   const execute = useCallback(
     (mode: 'all' | 'current' | 'explain') => {
       if (!activeTab || activeTab.kind !== 'query') return
@@ -111,11 +124,15 @@ export function ConnectionView({ conn }: Props): JSX.Element {
       }
       if (!sql || !sql.trim()) return
 
-      // Fresh results invalidate any pending edits on the old ones.
-      if (activeTabId) resetGrid(gridKey(sessionId, activeTabId))
-      void runQuery(sessionId, activeTab.id, sql, { explain: mode === 'explain' })
+      // EXPLAIN never modifies; otherwise, gate modifying SQL behind the loud
+      // confirmation when the connection opts in.
+      if (mode !== 'explain' && conn.config.confirmModifying && hasModifyingStatement(sql)) {
+        setPendingModify({ sql })
+        return
+      }
+      runResolved(sql, mode === 'explain')
     },
-    [activeTab, activeTabId, resetGrid, runQuery, sessionId]
+    [activeTab, conn.config.confirmModifying, runResolved]
   )
 
   const prettify = useCallback(() => {
@@ -190,13 +207,14 @@ export function ConnectionView({ conn }: Props): JSX.Element {
     if (!applyState || !activeTabId) return
     setApplyState({ ...applyState, busy: true, error: null })
     try {
-      await runQuery(sessionId, activeTabId, applyState.sql, { label: 'Apply grid changes' })
+      // No label: the History Action column should show the SQL that actually ran.
+      await runQuery(sessionId, activeTabId, applyState.sql)
       setApplyState(null)
       resetGrid(gridKey(sessionId, activeTabId))
       // Re-run the original SELECT so the grid reflects what is now stored.
       const statement = activeTab?.resultStatement
       if (statement && /^\s*SELECT/i.test(statement)) {
-        await runQuery(sessionId, activeTabId, statement, { label: 'Refresh after apply' })
+        await runQuery(sessionId, activeTabId, statement)
       }
     } catch (err) {
       setApplyState((current) =>
@@ -391,6 +409,19 @@ export function ConnectionView({ conn }: Props): JSX.Element {
           onConfirm={() => void confirmApply()}
         />
       )}
+
+      {pendingModify && (
+        <ConfirmModifyModal
+          sql={pendingModify.sql}
+          connectionName={conn.name}
+          onCancel={() => setPendingModify(null)}
+          onConfirm={() => {
+            const sql = pendingModify.sql
+            setPendingModify(null)
+            runResolved(sql, false)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -528,6 +559,7 @@ function TabContent({
           apiRef={editorApi}
           completionSchema={completionSchema}
           defaultSchema={conn.activeSchema}
+          background={isValidHex(conn.config.color) ? tint(conn.config.color!, 0.14) : undefined}
         />
       </div>
 

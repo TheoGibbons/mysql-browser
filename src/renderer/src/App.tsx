@@ -4,6 +4,7 @@ import { ContextMenuProvider, useContextMenu } from './components/ui/ContextMenu
 import { HomePage } from './components/HomePage'
 import { ConnectionView } from './components/ConnectionView'
 import { HomeIcon } from './components/ui/Icons'
+import { isValidHex, tint } from './lib/color'
 
 function Shell(): JSX.Element {
   const ready = useAppStore((s) => s.ready)
@@ -56,10 +57,23 @@ function Shell(): JSX.Element {
           <HomeIcon />
         </div>
 
-        {connTabs.map((tab) => (
+        {connTabs.map((tab) => {
+          const colored = isValidHex(tab.config.color)
+          // A persistent coloured top border + faint tint marks the connection
+          // (strongest on the active tab) so a live DB is obvious at a glance.
+          const tabStyle = colored
+            ? {
+                borderTopColor: tab.config.color,
+                borderTopWidth: 3,
+                background:
+                  tab.sessionId === activeSessionId ? tint(tab.config.color!, 0.16) : tint(tab.config.color!, 0.08)
+              }
+            : undefined
+          return (
           <div
             key={tab.sessionId}
             className={`conn-tab${tab.sessionId === activeSessionId ? ' active' : ''}`}
+            style={tabStyle}
             onMouseDown={(e) => {
               if (e.button === 1) {
                 e.preventDefault()
@@ -106,7 +120,8 @@ function Shell(): JSX.Element {
               ×
             </span>
           </div>
-        ))}
+          )
+        })}
       </div>
 
       {active ? <ConnectionView key={active.sessionId} conn={active} /> : <HomePage />}

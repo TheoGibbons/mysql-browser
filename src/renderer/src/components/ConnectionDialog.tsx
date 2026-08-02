@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ConnectionConfig, ConnectionMethod } from '@shared/types'
 import { Modal } from './ui/Modal'
 import { newId } from '../lib/ids'
+import { CONNECTION_COLORS, isValidHex, readableTextColor } from '../lib/color'
 
 const METHOD_LABELS: Record<ConnectionMethod, string> = {
   tcp: 'Standard (TCP/IP)',
@@ -27,6 +28,8 @@ function blankConnection(): ConnectionConfig {
     iamTokenCommand: '',
     useSSL: false,
     rejectUnauthorized: true,
+    color: '',
+    confirmModifying: false,
     createdAt: Date.now()
   }
 }
@@ -158,6 +161,62 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
           ))}
         </select>
         <span className="hint">Method to use to connect to the RDBMS</span>
+
+        <label>Colour:</label>
+        <div className="row" style={{ gap: 5, flexWrap: 'wrap' }}>
+          {CONNECTION_COLORS.map((swatch) => (
+            <button
+              key={swatch.value}
+              type="button"
+              title={swatch.name}
+              className="color-swatch"
+              style={{
+                background: swatch.value,
+                outline: config.color === swatch.value ? '2px solid #1b1b1b' : undefined,
+                outlineOffset: 1
+              }}
+              onClick={() => patch({ color: swatch.value })}
+            >
+              {config.color === swatch.value && (
+                <span style={{ color: readableTextColor(swatch.value), fontSize: 11 }}>✓</span>
+              )}
+            </button>
+          ))}
+          <input
+            type="color"
+            className="color-native"
+            title="Custom colour"
+            value={isValidHex(config.color) ? config.color : '#c0392b'}
+            onChange={(e) => patch({ color: e.target.value })}
+          />
+          <button
+            type="button"
+            className="btn"
+            style={{ minWidth: 0, height: 22, padding: '0 8px' }}
+            onClick={() => patch({ color: '' })}
+            disabled={!config.color}
+          >
+            None
+          </button>
+        </div>
+        <span className="hint">
+          Tints the home card, the connection tab and the query editor. Use red for production so a
+          live connection is obvious at a glance.
+        </span>
+
+        <label>Safety:</label>
+        <label className="checkline">
+          <input
+            type="checkbox"
+            checked={config.confirmModifying ?? false}
+            onChange={(e) => patch({ confirmModifying: e.target.checked })}
+          />
+          Confirm on modifying query (tick on production databases)
+        </label>
+        <span className="hint">
+          When ticked, an extra confirmation appears before any INSERT / UPDATE / DELETE / DDL
+          statement run from the editor executes.
+        </span>
       </div>
 
       <fieldset className="group">

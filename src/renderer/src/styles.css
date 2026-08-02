@@ -496,11 +496,19 @@ textarea {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  background: var(--bg-panel);
 }
 
 .cm-editor {
   height: 100%;
   font-size: var(--fs);
+  /* Transparent so a coloured connection tints through from .editor-host. */
+  background: transparent !important;
+}
+
+.cm-editor .cm-scroller,
+.cm-editor .cm-content {
+  background: transparent;
 }
 
 .cm-editor .cm-scroller {
@@ -513,9 +521,10 @@ textarea {
 }
 
 .cm-gutters {
-  background: #f7f7f7 !important;
+  /* Translucent so it darkens over a coloured editor tint (grey when untinted). */
+  background: rgba(0, 0, 0, 0.04) !important;
   border-right: 1px solid var(--border-light) !important;
-  color: #9b9b9b !important;
+  color: #8a8a8a !important;
 }
 
 /* Marks the statement the caret is in, mirroring Workbench's blue dot. */
@@ -844,6 +853,51 @@ table.grid td.editing input {
   border-radius: 0 0 4px 4px;
 }
 
+/* --- obnoxious modifying-query confirmation --- */
+
+.danger-backdrop {
+  background: rgba(120, 0, 0, 0.4);
+}
+
+.danger-modal {
+  border: 3px solid #b00000;
+  box-shadow: 0 0 0 4px rgba(176, 0, 0, 0.25), 0 12px 40px rgba(0, 0, 0, 0.4);
+  animation: danger-flash 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes danger-flash {
+  from {
+    box-shadow: 0 0 0 4px rgba(176, 0, 0, 0.18), 0 12px 40px rgba(0, 0, 0, 0.4);
+  }
+  to {
+    box-shadow: 0 0 0 5px rgba(214, 40, 40, 0.5), 0 12px 40px rgba(0, 0, 0, 0.4);
+  }
+}
+
+.danger-title {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  background: linear-gradient(#d32f2f, #b00000);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  flex: none;
+  border-radius: 1px 1px 0 0;
+}
+
+.danger-preview {
+  border-color: #d99;
+  background: #fff6f6;
+}
+
+.danger-footer {
+  background: #fdecec;
+  border-top-color: #e0b4b4;
+}
+
 .btn {
   height: 24px;
   min-width: 76px;
@@ -940,6 +994,32 @@ textarea.field {
   gap: 4px;
 }
 
+.color-swatch {
+  width: 22px;
+  height: 22px;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: 3px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.color-swatch:hover {
+  border-color: #1b1b1b;
+}
+
+.color-native {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: #fff;
+  cursor: pointer;
+}
+
 /* ------------------------------------------------------------ home page */
 
 .home {
@@ -984,6 +1064,11 @@ textarea.field {
 .conn-card:hover {
   background: #eef4fb;
   border-color: #b8cfe9;
+}
+
+/* Coloured cards keep their colour (set inline); brighten slightly on hover. */
+.conn-card.colored:hover {
+  filter: brightness(1.07);
 }
 
 .conn-card h3 {

@@ -192,6 +192,11 @@ export function isReadOnlyStatement(sql: string): boolean {
   return true
 }
 
+/** True when any statement in the script would modify data or schema. */
+export function hasModifyingStatement(sql: string): boolean {
+  return splitStatements(sql).some((s) => !isReadOnlyStatement(s.text))
+}
+
 export function stripComments(sql: string): string {
   return sql
     .replace(/\/\*[\s\S]*?\*\//g, ' ')

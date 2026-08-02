@@ -54,6 +54,8 @@ interface Props {
   completionSchema: Record<string, Record<string, string[]>>
   defaultSchema: string | null
   readOnly?: boolean
+  /** Background tint for the editor, from the connection's colour. */
+  background?: string
 }
 
 /** Workbench-like SQL colours. */
@@ -120,7 +122,8 @@ export function QueryEditor({
   apiRef,
   completionSchema,
   defaultSchema,
-  readOnly = false
+  readOnly = false,
+  background
 }: Props): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -263,5 +266,9 @@ export function QueryEditor({
     view.dispatch({ effects: langCompartment.current.reconfigure(languageExtension) })
   }, [languageExtension])
 
-  return <div className="editor-host" ref={hostRef} />
+  // The CodeMirror content is transparent (see styles.css), so tinting the host
+  // shows through the editor without touching syntax colours.
+  return (
+    <div className="editor-host" ref={hostRef} style={background ? { background } : undefined} />
+  )
 }
