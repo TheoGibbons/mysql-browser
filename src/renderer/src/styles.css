@@ -511,6 +511,13 @@ textarea {
   background: transparent;
 }
 
+/* I-beam over the editing area, overriding the app-wide default cursor. */
+.cm-editor .cm-scroller,
+.cm-editor .cm-content,
+.cm-editor .cm-line {
+  cursor: text;
+}
+
 .cm-editor .cm-scroller {
   font-family: var(--font-mono);
   line-height: 1.45;
@@ -525,6 +532,7 @@ textarea {
   background: rgba(0, 0, 0, 0.04) !important;
   border-right: 1px solid var(--border-light) !important;
   color: #8a8a8a !important;
+  cursor: default;
 }
 
 /* Marks the statement the caret is in, mirroring Workbench's blue dot. */
