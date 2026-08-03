@@ -69,6 +69,8 @@ export function registerIpc(): void {
   handle('connections:test', async (config: ConnectionConfig) =>
     testConnection(config, await effectivePrefs(config))
   )
+  handle('connections:export', () => store.exportConnections())
+  handle('connections:import', (items: unknown) => store.importConnections(items))
 
   // --- preferences -------------------------------------------------------
 
@@ -189,6 +191,11 @@ export function registerIpc(): void {
   handle('shell:writeFile', async (filePath: string, contents: string) => {
     const fsp = await import('node:fs/promises')
     await fsp.writeFile(filePath, contents, 'utf8')
+  })
+
+  handle('shell:readFile', async (filePath: string) => {
+    const fsp = await import('node:fs/promises')
+    return fsp.readFile(filePath, 'utf8')
   })
 
   handle('shell:showItem', (filePath: string) => {

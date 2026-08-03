@@ -127,6 +127,90 @@ export async function deleteConnection(id: string): Promise<ConnectionConfig[]> 
 }
 
 // ---------------------------------------------------------------------------
+// Import / export (connection definitions only — never tabs or schema cache)
+// ---------------------------------------------------------------------------
+
+/** All connections with secrets stripped, ready to serialise to a file. */
+export async function exportConnections(): Promise<ConnectionConfig[]> {
+  const connections = await listConnections()
+  return connections.map((c) => {
+    const copy = { ...c }
+    for (const key of SECRET_FIELDS) delete copy[key]
+    return copy
+  })
+}
+
+export interface ImportResult {
+  connections: ConnectionConfig[]
+  added: number
+  updated: number
+  skipped: number
+}
+
+/**
+ * Merges imported connections by id. Existing secrets are preserved when the
+ * imported entry has none (the export strips them), so re-importing never wipes
+ * a saved password. Unknown/invalid entries are skipped.
+ */
+export async function importConnections(incoming: unknown): Promise<ImportResult> {
+  const items = Array.isArray(incoming) ? incoming : []
+  // Work in plaintext, then encrypt once on write.
+  const byId = new Map<string, ConnectionConfig>()
+  for (const c of await listConnections()) byId.set(c.id, c)
+
+  let added = 0
+  let updated = 0
+  let skipped = 0
+
+  items.forEach((item, index) => {
+    const cfg = item as Partial<ConnectionConfig>
+    if (!cfg || typeof cfg !== 'object' || typeof cfg.name !== 'string' || cfg.name.trim() === '') {
+      skipped++
+      return
+    }
+
+    const id =
+      typeof cfg.id === 'string' && cfg.id.trim() !== ''
+        ? cfg.id
+        : `conn_import_${Date.now().toString(36)}_${index}`
+    const existing = byId.get(id)
+
+    // Non-secret fields come from the imported entry; strip secrets out of it.
+    const cleaned: Record<string, unknown> = { ...cfg }
+    for (const key of SECRET_FIELDS) delete cleaned[key]
+
+    const merged: ConnectionConfig = {
+      ...(existing ?? {}),
+      ...(cleaned as Partial<ConnectionConfig>),
+      id,
+      name: cfg.name.trim(),
+      createdAt: existing?.createdAt ?? (typeof cfg.createdAt === 'number' ? cfg.createdAt : Date.now())
+    } as ConnectionConfig
+
+    // Secrets: use an imported plaintext secret if one was included, else keep
+    // whatever the existing connection already had.
+    for (const key of SECRET_FIELDS) {
+      const imported = (cfg as Record<string, unknown>)[key]
+      if (typeof imported === 'string' && imported !== '' && !imported.startsWith(ENC_PREFIX)) {
+        merged[key] = imported
+      } else if (existing) {
+        merged[key] = existing[key]
+      } else {
+        delete merged[key]
+      }
+    }
+
+    byId.set(id, merged)
+    if (existing) updated++
+    else added++
+  })
+
+  const plain = [...byId.values()]
+  await writeJson(file('connections.json'), plain.map(protect))
+  return { connections: plain, added, updated, skipped }
+}
+
+// ---------------------------------------------------------------------------
 // Preferences
 // ---------------------------------------------------------------------------
 

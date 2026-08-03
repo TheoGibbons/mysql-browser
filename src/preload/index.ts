@@ -39,7 +39,13 @@ const api = {
     save: (config: ConnectionConfig) => call<ConnectionConfig[]>('connections:save', config),
     remove: (id: string) => call<ConnectionConfig[]>('connections:delete', id),
     test: (config: ConnectionConfig) =>
-      call<{ serverVersion: string; latencyMs: number }>('connections:test', config)
+      call<{ serverVersion: string; latencyMs: number }>('connections:test', config),
+    exportAll: () => call<ConnectionConfig[]>('connections:export'),
+    importAll: (items: unknown) =>
+      call<{ connections: ConnectionConfig[]; added: number; updated: number; skipped: number }>(
+        'connections:import',
+        items
+      )
   },
 
   prefs: {
@@ -108,6 +114,7 @@ const api = {
 
   files: {
     write: (filePath: string, contents: string) => call<void>('shell:writeFile', filePath, contents),
+    read: (filePath: string) => call<string>('shell:readFile', filePath),
     reveal: (filePath: string) => call<void>('shell:showItem', filePath)
   }
 }
