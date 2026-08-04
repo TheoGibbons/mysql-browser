@@ -4,6 +4,7 @@ import net from 'node:net'
 import fs from 'node:fs'
 import { Client, type ConnectConfig } from 'ssh2'
 import type { ConnectionConfig } from '@shared/types'
+import { toSupportedPrivateKey } from './ppk'
 
 export interface Tunnel {
   localPort: number
@@ -40,9 +41,9 @@ export function openTunnel(config: ConnectionConfig, timeoutMs: number): Promise
 
     if (config.sshKeyFile) {
       try {
-        opts.privateKey = fs.readFileSync(config.sshKeyFile)
+        opts.privateKey = toSupportedPrivateKey(fs.readFileSync(config.sshKeyFile))
       } catch (err) {
-        reject(new Error(`Could not read SSH key file "${config.sshKeyFile}": ${(err as Error).message}`))
+        reject(new Error(`SSH key file "${config.sshKeyFile}": ${(err as Error).message}`))
         return
       }
       if (config.sshPassphrase) opts.passphrase = config.sshPassphrase
