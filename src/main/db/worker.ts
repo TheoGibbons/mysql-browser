@@ -89,6 +89,7 @@ async function buildOptions(): Promise<ConnectionOptions> {
   const password = await resolvePassword()
   const host = tunnel ? '127.0.0.1' : config.host || '127.0.0.1'
   const portNumber = tunnel ? tunnel.localPort : config.port || 3306
+  const isIam = config.method === 'iam'
 
   const options: ConnectionOptions = {
     host,
@@ -109,8 +110,20 @@ async function buildOptions(): Promise<ConnectionOptions> {
     typeCast: castField
   }
 
-  if (config.useSSL) {
-    options.ssl = { rejectUnauthorized: config.rejectUnauthorized !== false }
+  if (isIam) {
+    // An RDS IAM user is created WITH AWSAuthenticationPlugin, and the server
+    // asks such clients for `mysql_clear_password` — the token is the password,
+    // sent as-is. mysql2 refuses that plugin unless it is enabled explicitly,
+    // and RDS only accepts a token over TLS, so both are non-negotiable here.
+    options.enableCleartextPlugin = true
+  }
+
+  if (config.useSSL || isIam) {
+    // RDS presents an Amazon CA that is not in Node's trust store, so IAM
+    // connections only verify when the user has asked for it deliberately.
+    options.ssl = {
+      rejectUnauthorized: config.useSSL ? config.rejectUnauthorized !== false : false
+    }
   }
 
   return options
@@ -142,9 +155,28 @@ function castField(field: any, next: () => unknown): unknown {
   return next()
 }
 
+/**
+ * RDS answers every IAM misconfiguration with a bare "Access denied", so spell
+ * out what is left to check once the token itself has been generated.
+ */
+function decorateError(err: any): any {
+  if (config.method !== 'iam' || err?.code !== 'ER_ACCESS_DENIED_ERROR') return err
+  const message =
+    `${err.sqlMessage || err.message}\n\n` +
+    'The token command succeeded, so the database rejected the token itself. Check that ' +
+    "the MySQL user was created WITH AWSAuthenticationPlugin AS 'RDS', that the IAM identity " +
+    'the token was signed with is allowed rds-db:connect for that user, and that --username in ' +
+    'the token command matches the username above exactly (it is case-sensitive).'
+  err.message = message
+  err.sqlMessage = message
+  return err
+}
+
 async function openConnection(): Promise<Connection> {
   const options = await buildOptions()
-  const conn = await mysql.createConnection(options)
+  const conn = await mysql.createConnection(options).catch((err) => {
+    throw decorateError(err)
+  })
   // A dropped socket on an idle tab connection must not take the process down.
   conn.on('error', () => undefined)
   return conn

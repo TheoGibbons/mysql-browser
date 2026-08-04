@@ -4,6 +4,7 @@ import { useAppStore } from '../store'
 import { useContextMenu } from './ui/ContextMenu'
 import { ExportIcon, ImportIcon, PlusIcon, SearchIcon } from './ui/Icons'
 import { ConnectionDialog } from './ConnectionDialog'
+import { Marquee } from './ui/Marquee'
 import { Modal } from './ui/Modal'
 import { isValidHex, readableDimColor, readableTextColor } from '../lib/color'
 
@@ -229,7 +230,7 @@ export function HomePage(): JSX.Element {
             return (
               <div
                 key={config.id}
-                className={`conn-card${colored ? ' colored' : ''}`}
+                className={`conn-card${colored ? ' colored' : ''}${badge ? ' has-badge' : ''}`}
                 style={cardStyle}
                 onDoubleClick={() => void openConnection(config, true)}
                 onContextMenu={(e) => onCardContextMenu(e, config)}
@@ -239,10 +240,10 @@ export function HomePage(): JSX.Element {
                   {config.name}
                 </h3>
                 <div className="meta" style={metaStyle}>
-                  👤 {config.user || '—'}
+                  👤 <Marquee>{config.user || '—'}</Marquee>
                 </div>
                 <div className="meta" style={metaStyle}>
-                  🖧 {endpoint(config)}
+                  🖧 <Marquee>{endpoint(config)}</Marquee>
                 </div>
                 {badge && <span className="badge">{badge}</span>}
               </div>

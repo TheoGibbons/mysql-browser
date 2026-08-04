@@ -152,7 +152,16 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
         <select
           className="field"
           value={config.method}
-          onChange={(e) => patch({ method: e.target.value as ConnectionMethod })}
+          onChange={(e) => {
+            const method = e.target.value as ConnectionMethod
+            // AWS only accepts an IAM token over TLS, and the RDS CA is not one
+            // Node trusts out of the box.
+            patch(
+              method === 'iam'
+                ? { method, useSSL: true, rejectUnauthorized: false }
+                : { method }
+            )
+          }}
         >
           {(Object.keys(METHOD_LABELS) as ConnectionMethod[]).map((method) => (
             <option key={method} value={method}>
@@ -174,6 +183,7 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
                   className="field"
                   style={{ flex: 1 }}
                   value={config.sshHost ?? ''}
+                  title={config.sshHost || undefined}
                   onChange={(e) => patch({ sshHost: e.target.value })}
                 />
                 <label style={{ whiteSpace: 'nowrap' }}>Port:</label>
@@ -230,6 +240,7 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
               <input
                 className="field"
                 value={config.host}
+                title={config.host || undefined}
                 onChange={(e) => patch({ host: e.target.value })}
               />
               <span className="hint">MySQL server host relative to the SSH server.</span>
@@ -252,6 +263,7 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
                   className="field"
                   style={{ flex: 1 }}
                   value={config.host}
+                  title={config.host || undefined}
                   onChange={(e) => patch({ host: e.target.value })}
                 />
                 <label style={{ whiteSpace: 'nowrap' }}>Port:</label>
@@ -287,7 +299,8 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
               <span className="hint">
                 Command whose stdout is used as the password. AWS IAM tokens expire after 15
                 minutes, so it is re-run in the background every 10 minutes and before each new
-                query tab opens its connection.
+                query tab opens its connection. It uses whatever AWS credentials the command
+                itself finds - add --profile if the default one is not the right identity.
               </span>
             </>
           ) : (
@@ -313,10 +326,11 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
 
           <label>Use SSL:</label>
           <div className="row" style={{ gap: 14 }}>
-            <label className="checkline">
+            <label className="checkline" style={{ opacity: config.method === 'iam' ? 0.45 : 1 }}>
               <input
                 type="checkbox"
-                checked={config.useSSL ?? false}
+                disabled={config.method === 'iam'}
+                checked={config.method === 'iam' || (config.useSSL ?? false)}
                 onChange={(e) => patch({ useSSL: e.target.checked })}
               />
               Enable SSL/TLS
@@ -331,7 +345,11 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
               Verify server certificate
             </label>
           </div>
-          <span className="hint">Required by most managed MySQL services.</span>
+          <span className="hint">
+            {config.method === 'iam'
+              ? 'Always on for AWS IAM - the token is only accepted over TLS. Leave verification off unless you have added the Amazon RDS CA to your machine.'
+              : 'Required by most managed MySQL services.'}
+          </span>
         </div>
       </fieldset>
 

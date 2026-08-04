@@ -950,6 +950,14 @@ table.grid td.editing input {
 }
 
 /*
+ * Cap the help-text column so a long hint wraps instead of sizing the column to
+ * its single-line max-content width and pushing the dialog off screen.
+ */
+.form-grid > .hint {
+  max-width: 250px;
+}
+
+/*
  * Preferences layout: label + control on one row (label left-aligned), with the
  * long help text on its own full-width row underneath, so it never forces the
  * modal to scroll sideways.
@@ -1298,6 +1306,41 @@ textarea.field {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Keep the endpoint clear of the method badge sitting in the corner. */
+.conn-card.has-badge .meta:last-of-type {
+  padding-right: 62px;
+}
+
+/* Overflowing text slides its tail into view while the card is hovered. */
+.marquee {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The ellipsis is only useful at rest - it would sit over the sliding text. */
+.conn-card:hover .marquee {
+  text-overflow: clip;
+}
+
+.marquee > span {
+  display: inline-block;
+  transform: translateX(0);
+  transition: transform var(--marquee-ms, 0ms) linear;
+}
+
+.conn-card:hover .marquee.overflowing > span {
+  transform: translateX(var(--marquee-x, 0));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee > span {
+    transition: none;
+  }
 }
 
 .conn-card .badge {
