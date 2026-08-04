@@ -680,6 +680,17 @@ table.grid td.editing input {
   cursor: col-resize;
 }
 
+/* Cells are text-selectable, so a drag would otherwise highlight everything
+   the pointer sweeps across on its way. */
+body.resizing-col {
+  cursor: col-resize;
+}
+
+body.resizing-col * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
 .grid-placeholder {
   padding: 12px;
   color: var(--text-dim);
@@ -699,7 +710,6 @@ table.grid td.editing input {
 /* -------------------------------------------------------------- history */
 
 .history-table {
-  width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   font-size: var(--fs-sm);
@@ -707,6 +717,7 @@ table.grid td.editing input {
 }
 
 .history-table th {
+  /* Sticky also makes this the containing block for the resize handle. */
   position: sticky;
   top: 0;
   background: var(--bg-header);
@@ -715,7 +726,18 @@ table.grid td.editing input {
   text-align: left;
   padding: 2px 5px;
   font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
   z-index: 1;
+}
+
+/* Takes up the slack when the pane is wider than the columns. */
+.history-table th.filler {
+  border-right: none;
+}
+
+.history-table td.filler {
+  padding: 0;
 }
 
 .history-table td {

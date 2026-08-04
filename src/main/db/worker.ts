@@ -23,7 +23,7 @@ import type {
   TableDefinition
 } from '@shared/types'
 import type { WorkerEvent, WorkerInit, WorkerRequest, WorkerResponse } from '@shared/worker-protocol'
-import { splitStatements, firstKeyword } from '@shared/sql'
+import { splitStatements, firstKeyword, isReadOnlyStatement } from '@shared/sql'
 import { openTunnel, type Tunnel } from './tunnel'
 import { IamTokenProvider } from './iam'
 import {
@@ -56,12 +56,17 @@ interface TabConnection {
   threadId: number
   busy: boolean
   lastUsed: number
+  /** Set the moment the socket errors or ends — a dead mysql2 connection never recovers. */
+  dead: boolean
 }
 
 let tunnel: Tunnel | null = null
 let iam: IamTokenProvider | null = null
 /** Metadata + KILL connection, kept free of user queries so cancel always works. */
 let control: Connection | null = null
+let controlDead = false
+let controlReopen: Promise<void> | null = null
+let serverVersion = 'unknown'
 const tabConnections = new Map<string, TabConnection>()
 /** Follows the last successful `USE`, so new tab connections open in the same schema. */
 let currentSchema: string | undefined = config.defaultSchema || undefined
@@ -172,14 +177,130 @@ function decorateError(err: any): any {
   return err
 }
 
-async function openConnection(): Promise<Connection> {
-  const options = await buildOptions()
-  const conn = await mysql.createConnection(options).catch((err) => {
-    throw decorateError(err)
-  })
-  // A dropped socket on an idle tab connection must not take the process down.
-  conn.on('error', () => undefined)
+/**
+ * Network-level failures that mean "this socket is gone", as opposed to a SQL
+ * error the server deliberately returned. Anything matched here is recoverable
+ * by throwing the connection away and opening a new one.
+ */
+const LOST_CONNECTION_CODES = new Set([
+  'PROTOCOL_CONNECTION_LOST',
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ESOCKET',
+  'EHOSTUNREACH',
+  'ENETRESET',
+  'ER_CLIENT_INTERACTION_TIMEOUT'
+])
+
+function isConnectionLost(err: any): boolean {
+  if (!err) return false
+  if (err.code && LOST_CONNECTION_CODES.has(err.code)) return true
+  const message = String(err.sqlMessage || err.message || '')
+  return (
+    // Raised by mysql2 when a command is queued after the socket died. The
+    // packet never leaves the client, so the statement provably did not run.
+    message.includes('closed state') ||
+    message.includes('Connection lost') ||
+    message.includes('The client was disconnected by the server')
+  )
+}
+
+/**
+ * mysql2 refuses every command once its socket is gone, and there is no way to
+ * revive it — so treat an enqueue-time rejection as proof the statement never
+ * reached the server, which makes retrying it on a fresh connection safe.
+ */
+function isEnqueueRefusal(err: any): boolean {
+  return String(err?.message || '').includes('closed state')
+}
+
+/** False as soon as mysql2 knows the socket has errored, closed, or been destroyed. */
+function isUsable(conn: Connection | null): boolean {
+  if (!conn) return false
+  const core = (conn as unknown as { connection?: { state?: string } }).connection
+  const state = core?.state
+  // Older mysql2 builds have no `state` getter; assume usable and let the
+  // per-connection `dead` flag and query errors catch the failure instead.
+  if (!state) return true
+  return state === 'authenticated' || state === 'connected'
+}
+
+async function openConnection(onLost?: () => void): Promise<Connection> {
+  let conn: Connection
+  try {
+    conn = await mysql.createConnection(await buildOptions())
+  } catch (err: any) {
+    // A cached IAM token can be past its 15-minute window before the refresh
+    // timer notices — after the machine sleeps, say. Mint a fresh one and try
+    // once more before telling the user their credentials were rejected.
+    const retryable = config.method === 'iam' && err?.code === 'ER_ACCESS_DENIED_ERROR' && iam
+    if (!retryable) throw decorateError(err)
+    try {
+      await iam!.get(true)
+    } catch {
+      throw decorateError(err)
+    }
+    conn = await mysql.createConnection(await buildOptions()).catch((retryErr) => {
+      throw decorateError(retryErr)
+    })
+  }
+  // A dropped socket on an idle connection must not take the process down, but
+  // it does have to be recorded — otherwise the dead connection stays cached and
+  // every later query fails with "connection is in closed state" forever.
+  conn.on('error', () => onLost?.())
+  conn.on('end', () => onLost?.())
   return conn
+}
+
+/** Throws the connection away without waiting for a clean MySQL goodbye. */
+function discard(conn: Connection | null): void {
+  if (!conn) return
+  try {
+    conn.destroy()
+  } catch {
+    /* already gone */
+  }
+}
+
+async function openControl(): Promise<Connection> {
+  const conn: Connection = await openConnection(() => {
+    if (control === conn) controlDead = true
+  })
+  control = conn
+  controlDead = false
+  return conn
+}
+
+/**
+ * Replaces a control connection whose socket has gone. Concurrent callers share
+ * one attempt so a burst of metadata requests cannot open a burst of sockets.
+ */
+function reopenControl(): Promise<void> {
+  if (controlReopen) return controlReopen
+
+  controlReopen = (async () => {
+    const previous = control
+    control = null
+    discard(previous)
+    emit({ event: 'log', level: 'warn', message: 'Connection was dropped — reopening.' })
+    emit({ event: 'status', status: 'connecting' })
+    try {
+      await openControl()
+    } catch (err) {
+      // Leaves the session in `error`, which is what makes the renderer offer
+      // (and auto-trigger) a full Reconnect — the only way to rebuild an SSH
+      // tunnel or re-run the IAM token command from scratch.
+      emit({ event: 'status', status: 'error', message: (err as Error).message })
+      throw err
+    }
+    emit({ event: 'status', status: 'connected', serverVersion })
+    emit({ event: 'log', level: 'info', message: 'Connection reopened.' })
+  })().finally(() => {
+    controlReopen = null
+  })
+
+  return controlReopen
 }
 
 async function connect(): Promise<{ serverVersion: string }> {
@@ -189,9 +310,9 @@ async function connect(): Promise<{ serverVersion: string }> {
     tunnel = await openTunnel(config, Math.max(1, prefs.connectTimeoutSec) * 1000)
   }
 
-  control = await openConnection()
-  const [rows] = await control.query<any[]>('SELECT VERSION() AS v')
-  const serverVersion = String(rows?.[0]?.[0] ?? rows?.[0]?.v ?? 'unknown')
+  await openControl()
+  const [rows] = await control!.query<any[]>('SELECT VERSION() AS v')
+  serverVersion = String(rows?.[0]?.[0] ?? rows?.[0]?.v ?? 'unknown')
 
   startKeepAlive()
   emit({ event: 'status', status: 'connected', serverVersion })
@@ -207,6 +328,7 @@ async function disconnect(): Promise<void> {
   tabConnections.clear()
   if (control) all.push(control)
   control = null
+  controlDead = false
 
   await Promise.all(
     all.map((c) =>
@@ -242,22 +364,86 @@ function stopKeepAlive(): void {
   }
 }
 
+/**
+ * Keeps sockets warm and, more importantly, evicts the ones that died while
+ * idle. A dead tab connection that stays in the map answers every later query
+ * with "Can't add new command when connection is in closed state"; dropping it
+ * here means the next query silently opens a fresh one.
+ */
 async function pingAll(): Promise<void> {
-  const targets: Connection[] = []
-  if (control) targets.push(control)
-  for (const tc of tabConnections.values()) if (!tc.busy) targets.push(tc.conn)
-  await Promise.all(targets.map((c) => c.ping().catch(() => undefined)))
+  if (closed) return
+
+  await Promise.all(
+    [...tabConnections].map(async ([tabId, tc]) => {
+      if (tc.busy) return
+      const alive = !tc.dead && isUsable(tc.conn) && (await tc.conn.ping().then(() => true, () => false))
+      if (alive) return
+      tc.dead = true
+      if (tabConnections.get(tabId) === tc) tabConnections.delete(tabId)
+      discard(tc.conn)
+    })
+  )
+
+  if (!control || closed) return
+  const controlAlive =
+    !controlDead && isUsable(control) && (await control.ping().then(() => true, () => false))
+  if (controlAlive) return
+
+  try {
+    await reopenControl()
+  } catch (err) {
+    emit({ event: 'status', status: 'error', message: (err as Error).message })
+  }
 }
 
 async function connectionForTab(tabId: string): Promise<TabConnection> {
   const existing = tabConnections.get(tabId)
-  if (existing) return existing
+  if (existing && !existing.dead && isUsable(existing.conn)) return existing
+  if (existing) {
+    // The cached socket is gone. mysql2 cannot revive one, so throw it away
+    // rather than let it reject every future query on this tab.
+    tabConnections.delete(tabId)
+    discard(existing.conn)
+  }
 
-  const conn = await openConnection()
-  const threadId = (conn as unknown as { threadId: number }).threadId
-  const entry: TabConnection = { conn, threadId, busy: false, lastUsed: Date.now() }
+  const entry: TabConnection = {
+    conn: null as unknown as Connection,
+    threadId: 0,
+    busy: false,
+    lastUsed: Date.now(),
+    dead: false
+  }
+  entry.conn = await openConnection(() => {
+    entry.dead = true
+  })
+  entry.threadId = (entry.conn as unknown as { threadId: number }).threadId
   tabConnections.set(tabId, entry)
   return entry
+}
+
+/** Swaps a tab's dead connection for a fresh one, preserving the busy marker. */
+async function replaceTabConnection(tabId: string, previous: TabConnection): Promise<TabConnection> {
+  previous.dead = true
+  previous.busy = false
+  if (tabConnections.get(tabId) === previous) tabConnections.delete(tabId)
+  discard(previous.conn)
+  emit({ event: 'log', level: 'warn', message: 'Query connection was dropped — reconnecting.' })
+
+  const entry = await connectionForTab(tabId)
+  entry.busy = true
+  return entry
+}
+
+/**
+ * Whether a failed statement can safely be re-run on a fresh connection.
+ *
+ * An enqueue refusal proves the packet never left the client, so anything can be
+ * retried. When the socket died mid-flight we cannot tell whether the server
+ * applied the statement, so only reads — which have no side effects — go again.
+ */
+function canRetryStatement(err: unknown, sql: string): boolean {
+  if (!isConnectionLost(err)) return false
+  return isEnqueueRefusal(err) || isReadOnlyStatement(sql)
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +559,9 @@ async function cancelTab(tabId: string): Promise<{ killed: boolean }> {
   const entry = tabConnections.get(tabId)
   if (!entry || !entry.busy || !control) return { killed: false }
   try {
-    await control.query(`KILL QUERY ${Number(entry.threadId)}`)
+    // Cancelling is best-effort, but it must not fail merely because the control
+    // socket went idle-dead while the user's query was still running.
+    await withControl((c) => c.query(`KILL QUERY ${Number(entry.threadId)}`))
     return { killed: true }
   } catch {
     return { killed: false }
@@ -384,7 +572,7 @@ async function runQuery(tabId: string, sql: string, limitRows?: number): Promise
   const statements = splitStatements(sql)
   if (statements.length === 0) throw new Error('Nothing to execute')
 
-  const entry = await connectionForTab(tabId)
+  let entry = await connectionForTab(tabId)
   if (entry.busy) throw new Error('This tab already has a query running')
 
   entry.busy = true
@@ -405,7 +593,16 @@ async function runQuery(tabId: string, sql: string, limitRows?: number): Promise
 
   try {
     for (const statement of statements) {
-      const result = await runStatement(entry, statement.text, limitRows ?? MAX_ROWS)
+      let result: ResultSet
+      try {
+        result = await runStatement(entry, statement.text, limitRows ?? MAX_ROWS)
+      } catch (err) {
+        // An idle socket dropped by RDS/a NAT gateway looks exactly like this,
+        // and the user should never have to press Reconnect for it.
+        if (timedOut || closed || !canRetryStatement(err, statement.text)) throw err
+        entry = await replaceTabConnection(tabId, entry)
+        result = await runStatement(entry, statement.text, limitRows ?? MAX_ROWS)
+      }
       results.push(result)
       executed.push(statement.text)
 
@@ -435,13 +632,25 @@ async function runQuery(tabId: string, sql: string, limitRows?: number): Promise
 // Metadata
 // ---------------------------------------------------------------------------
 
-function requireControl(): Connection {
+/**
+ * Runs metadata work on the control connection, reopening it first when the
+ * socket has died and retrying once if it dies mid-flight. Every caller is a
+ * read, so re-running is always safe.
+ */
+async function withControl<T>(run: (conn: Connection) => Promise<T>): Promise<T> {
   if (!control) throw new Error('Not connected')
-  return control
+  if (controlDead || !isUsable(control)) await reopenControl()
+
+  try {
+    return await run(control!)
+  } catch (err) {
+    if (closed || !isConnectionLost(err)) throw err
+    await reopenControl()
+    return run(control!)
+  }
 }
 
-async function listSchemas(): Promise<SchemaInfo[]> {
-  const conn = requireControl()
+async function listSchemas(conn: Connection): Promise<SchemaInfo[]> {
   const [schemaRows] = await conn.query<any[]>(
     'SELECT SCHEMA_NAME FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME'
   )
@@ -469,8 +678,7 @@ async function listSchemas(): Promise<SchemaInfo[]> {
   return [...bySchema.values()]
 }
 
-async function tableColumns(schema: string, table: string): Promise<string[]> {
-  const conn = requireControl()
+async function tableColumns(conn: Connection, schema: string, table: string): Promise<string[]> {
   const [rows] = await conn.query<any[]>(
     `SELECT COLUMN_NAME FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION`,
@@ -480,8 +688,7 @@ async function tableColumns(schema: string, table: string): Promise<string[]> {
 }
 
 /** Every column in a schema in one round trip — the code-completion source. */
-async function schemaColumns(schema: string): Promise<Record<string, string[]>> {
-  const conn = requireControl()
+async function schemaColumns(conn: Connection, schema: string): Promise<Record<string, string[]>> {
   const [rows] = await conn.query<any[]>(
     `SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME, ORDINAL_POSITION`,
@@ -495,9 +702,11 @@ async function schemaColumns(schema: string): Promise<Record<string, string[]>> 
   return out
 }
 
-async function tableDefinition(schema: string, table: string): Promise<TableDefinition> {
-  const conn = requireControl()
-
+async function tableDefinition(
+  conn: Connection,
+  schema: string,
+  table: string
+): Promise<TableDefinition> {
   const [tableRows] = await conn.query<any[]>(
     `SELECT ENGINE, TABLE_COLLATION, TABLE_COMMENT
        FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
@@ -632,11 +841,11 @@ async function tableDefinition(schema: string, table: string): Promise<TableDefi
 }
 
 async function createStatement(
+  conn: Connection,
   kind: 'table' | 'schema',
   schema: string,
   table?: string
 ): Promise<string> {
-  const conn = requireControl()
   if (kind === 'schema') {
     const [rows] = await conn.query<any[]>(`SHOW CREATE DATABASE \`${schema.replace(/`/g, '``')}\``)
     return String((rows as any[][])[0]?.[1] ?? '')
@@ -647,8 +856,7 @@ async function createStatement(
   return String((rows as any[][])[0]?.[1] ?? '')
 }
 
-async function charsets(): Promise<{ charset: string; collations: string[] }[]> {
-  const conn = requireControl()
+async function charsets(conn: Connection): Promise<{ charset: string; collations: string[] }[]> {
   const [rows] = await conn.query<any[]>(
     'SELECT CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.COLLATIONS ORDER BY CHARACTER_SET_NAME, COLLATION_NAME'
   )
@@ -702,17 +910,17 @@ async function handle(req: WorkerRequest): Promise<unknown> {
     case 'cancel':
       return cancelTab(req.tabId)
     case 'listSchemas':
-      return listSchemas()
+      return withControl(listSchemas)
     case 'tableDefinition':
-      return tableDefinition(req.schema, req.table)
+      return withControl((c) => tableDefinition(c, req.schema, req.table))
     case 'tableColumns':
-      return tableColumns(req.schema, req.table)
+      return withControl((c) => tableColumns(c, req.schema, req.table))
     case 'schemaColumns':
-      return schemaColumns(req.schema)
+      return withControl((c) => schemaColumns(c, req.schema))
     case 'createStatement':
-      return createStatement(req.kind, req.schema, req.table)
+      return withControl((c) => createStatement(c, req.kind, req.schema, req.table))
     case 'charsets':
-      return charsets()
+      return withControl(charsets)
     case 'setPrefs':
       prefs = req.prefs
       startKeepAlive()

@@ -307,6 +307,11 @@ export function HomePage(): JSX.Element {
   const dragRef = useRef<DragItem | null>(null)
 
   const exportConnections = async (): Promise<void> => {
+    const now = new Date()
+    const pad = (n: number): string => String(n).padStart(2, '0')
+    const stamp =
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+      `_${pad(now.getHours())}-${pad(now.getMinutes())}`
     const data = await window.api.connections.exportAll()
     if (data.connections.length === 0) {
       setNotice('There are no connections to export.')
@@ -322,7 +327,7 @@ export function HomePage(): JSX.Element {
     }
     const target = await window.api.dialog.saveFile(
       'Export connections',
-      'mysql-browser-connections.json',
+      `${stamp}_mysql-browser-connections.json`,
       [{ name: 'JSON', extensions: ['json'] }]
     )
     if (!target) return

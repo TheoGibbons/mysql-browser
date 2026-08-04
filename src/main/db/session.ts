@@ -41,6 +41,7 @@ export class Session {
   private readonly pending = new Map<number, Pending>()
   private nextId = 1
   private terminated = false
+  private reconnecting: Promise<{ serverVersion: string }> | null = null
 
   status: SessionStatus = 'offline'
   statusMessage: string | undefined
@@ -134,13 +135,24 @@ export class Session {
     }
   }
 
-  /** Tears the worker down and starts a fresh one. */
-  async reconnect(config?: ConnectionConfig, prefs?: Preferences): Promise<{ serverVersion: string }> {
+  /**
+   * Tears the worker down and starts a fresh one. Concurrent callers — several
+   * query tabs noticing the drop at once — share a single attempt.
+   */
+  reconnect(config?: ConnectionConfig, prefs?: Preferences): Promise<{ serverVersion: string }> {
     if (config) this.config = config
     if (prefs) this.prefs = prefs
-    await this.close()
-    this.terminated = false
-    return this.connect()
+    if (this.reconnecting) return this.reconnecting
+
+    this.reconnecting = (async () => {
+      await this.close()
+      this.terminated = false
+      return this.connect()
+    })().finally(() => {
+      this.reconnecting = null
+    })
+
+    return this.reconnecting
   }
 
   async close(): Promise<void> {

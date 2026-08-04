@@ -22,6 +22,7 @@ import {
   completionKeymap,
   startCompletion
 } from '@codemirror/autocomplete'
+import type { Completion, CompletionResult, CompletionSource } from '@codemirror/autocomplete'
 import { MySQL, sql } from '@codemirror/lang-sql'
 import {
   HighlightStyle,
@@ -30,7 +31,7 @@ import {
   syntaxHighlighting
 } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
-import { statementAt } from '@shared/sql'
+import { referencedTables, statementAt } from '@shared/sql'
 
 export interface EditorApi {
   getSql(): string
@@ -53,9 +54,89 @@ interface Props {
   /** `schema -> table -> columns`, used for completion. */
   completionSchema: Record<string, Record<string, string[]>>
   defaultSchema: string | null
+  /** Asked to fetch columns for a schema the statement mentions but that isn't cached. */
+  onNeedSchemaColumns?(schema: string): void
   readOnly?: boolean
   /** Background tint for the editor, from the connection's colour. */
   background?: string
+}
+
+interface CompletionContextData {
+  schema: Record<string, Record<string, string[]>>
+  defaultSchema: string | null
+  onNeedSchemaColumns?(schema: string): void
+}
+
+/** Case-insensitive lookup, since MySQL identifier casing varies by platform. */
+function lookup<T>(map: Record<string, T>, name: string): T | undefined {
+  const direct = map[name]
+  if (direct !== undefined) return direct
+  const lower = name.toLowerCase()
+  for (const key of Object.keys(map)) {
+    if (key.toLowerCase() === lower) return map[key]
+  }
+  return undefined
+}
+
+/**
+ * Completes the columns of the tables in the current statement's FROM/JOIN
+ * clauses. `@codemirror/lang-sql` only offers columns behind a dotted prefix
+ * (`t.col`), so an unqualified `where <caret>` would otherwise see nothing but
+ * schema names and keywords.
+ */
+function fromClauseCompletions(
+  dataRef: React.MutableRefObject<CompletionContextData>
+): CompletionSource {
+  return (context): CompletionResult | null => {
+    const word = context.matchBefore(/[\w$]*/)
+    if (!word) return null
+    if (word.from === word.to && !context.explicit) return null
+
+    // Qualified and quoted paths are lang-sql's job.
+    const prev = context.state.sliceDoc(Math.max(0, word.from - 1), word.from)
+    if (prev === '.' || prev === '`') return null
+
+    const { schema, defaultSchema, onNeedSchemaColumns } = dataRef.current
+    const statement = statementAt(context.state.doc.toString(), context.pos)
+    if (!statement) return null
+
+    const options: Completion[] = []
+    const seen = new Set<string>()
+
+    for (const ref of referencedTables(statement.text)) {
+      const schemaName = ref.schema ?? defaultSchema
+      if (!schemaName) continue
+
+      const tables = lookup(schema, schemaName)
+      if (!tables) continue
+
+      const columns = lookup(tables, ref.table)
+      if (!columns) continue
+      if (columns.length === 0) {
+        // Known table, columns not fetched yet — pull them in for next time.
+        onNeedSchemaColumns?.(schemaName)
+        continue
+      }
+
+      if (ref.alias && !seen.has(ref.alias)) {
+        seen.add(ref.alias)
+        options.push({ label: ref.alias, type: 'constant', detail: ref.table, boost: 2 })
+      }
+      for (const column of columns) {
+        if (seen.has(column)) continue
+        seen.add(column)
+        options.push({
+          label: column,
+          type: 'property',
+          detail: ref.alias ?? ref.table,
+          boost: 1
+        })
+      }
+    }
+
+    if (options.length === 0) return null
+    return { from: word.from, options, validFor: /^[\w$]*$/ }
+  }
 }
 
 /** Workbench-like SQL colours. */
@@ -122,6 +203,7 @@ export function QueryEditor({
   apiRef,
   completionSchema,
   defaultSchema,
+  onNeedSchemaColumns,
   readOnly = false,
   background
 }: Props): JSX.Element {
@@ -133,6 +215,15 @@ export function QueryEditor({
   // Handlers are read through a ref so re-created callbacks never rebuild the view.
   const handlers = useRef({ onChange, onExecuteCurrent, onExecuteAll })
   handlers.current = { onChange, onExecuteCurrent, onExecuteAll }
+
+  // The completion source reads the latest schema through a ref, so a growing
+  // column cache never has to reconfigure the editor.
+  const completionData = useRef<CompletionContextData>({
+    schema: completionSchema,
+    defaultSchema,
+    onNeedSchemaColumns
+  })
+  completionData.current = { schema: completionSchema, defaultSchema, onNeedSchemaColumns }
 
   const languageExtension = useMemo(
     () =>
@@ -174,6 +265,7 @@ export function QueryEditor({
           closeBrackets(),
           highlightSelectionMatches(),
           autocompletion({ activateOnTyping: true, maxRenderedOptions: 40 }),
+          MySQL.language.data.of({ autocomplete: fromClauseCompletions(completionData) }),
           syntaxHighlighting(highlightStyle),
           currentStatementHighlight,
           langCompartment.current.of(languageExtension),

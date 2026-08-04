@@ -299,12 +299,31 @@ export interface SessionLayout {
   sidebarWidth: number
   resultsHeight: number
   historyHeight: number
+  historyColumns: HistoryColumnWidths
+}
+
+/** Drag-resizable history columns. The status icon gutter is a fixed size. */
+export interface HistoryColumnWidths {
+  seq: number
+  time: number
+  action: number
+  message: number
+  duration: number
+}
+
+export const DEFAULT_HISTORY_COLUMNS: HistoryColumnWidths = {
+  seq: 46,
+  time: 92,
+  action: 520,
+  message: 240,
+  duration: 150
 }
 
 export const DEFAULT_LAYOUT: SessionLayout = {
   sidebarWidth: 260,
   resultsHeight: 300,
-  historyHeight: 160
+  historyHeight: 160,
+  historyColumns: { ...DEFAULT_HISTORY_COLUMNS }
 }
 
 // ---------------------------------------------------------------------------

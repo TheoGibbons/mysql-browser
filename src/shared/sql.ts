@@ -218,6 +218,99 @@ export function guessTableName(sql: string): string | null {
   return parts[parts.length - 1] || null
 }
 
+export interface TableRef {
+  /** Explicit qualifier, or `null` when the table was named on its own. */
+  schema: string | null
+  table: string
+  alias: string | null
+}
+
+const IDENT_AT_START = /^(?:`([^`]+)`|([A-Za-z0-9_$]+))/
+
+/** Clause introducers that are followed by a comma-separated list of tables. */
+const TABLE_CLAUSE = /\b(?:FROM|JOIN|INTO|UPDATE)\b/gi
+
+/** Words that can sit where an alias would, but never are one. */
+const NOT_AN_ALIAS = new Set([
+  'as', 'on', 'using', 'where', 'group', 'order', 'having', 'limit', 'offset',
+  'join', 'inner', 'left', 'right', 'full', 'outer', 'cross', 'natural',
+  'straight_join', 'union', 'intersect', 'except', 'set', 'values', 'select',
+  'for', 'force', 'use', 'ignore', 'index', 'key', 'partition', 'lateral',
+  'window', 'with', 'and', 'or', 'not', 'is', 'null', 'like', 'between', 'in',
+  'exists', 'when', 'then', 'else', 'end', 'case', 'distinct', 'all',
+  'returning', 'duplicate', 'into', 'from', 'update', 'delete', 'insert',
+  'replace', 'table', 'procedure', 'desc', 'asc', 'low_priority', 'quick'
+])
+
+function readIdent(text: string, pos: number): { name: string; end: number } | null {
+  const m = IDENT_AT_START.exec(text.slice(pos))
+  if (!m) return null
+  return { name: m[1] ?? m[2], end: pos + m[0].length }
+}
+
+function skipSpace(text: string, pos: number): number {
+  while (pos < text.length && /\s/.test(text[pos])) pos++
+  return pos
+}
+
+/**
+ * Best-effort list of the tables a statement reads or writes, with their
+ * aliases — enough to offer their columns for completion. Subqueries and other
+ * shapes we can't parse are skipped rather than guessed at.
+ */
+export function referencedTables(sql: string): TableRef[] {
+  const text = stripComments(sql)
+  const out: TableRef[] = []
+
+  TABLE_CLAUSE.lastIndex = 0
+  for (let clause = TABLE_CLAUSE.exec(text); clause; clause = TABLE_CLAUSE.exec(text)) {
+    let pos = clause.index + clause[0].length
+
+    // A comma-separated list: `from a, b as c, d.e f`.
+    for (;;) {
+      pos = skipSpace(text, pos)
+      const first = readIdent(text, pos)
+      if (!first) break
+      pos = first.end
+
+      let schema: string | null = null
+      let table = first.name
+
+      const afterName = skipSpace(text, pos)
+      if (text[afterName] === '.') {
+        const second = readIdent(text, skipSpace(text, afterName + 1))
+        if (!second) break
+        schema = table
+        table = second.name
+        pos = second.end
+      }
+
+      // Optional alias, with or without AS.
+      let alias: string | null = null
+      let cursor = skipSpace(text, pos)
+      const maybeAs = readIdent(text, cursor)
+      if (maybeAs && maybeAs.name.toLowerCase() === 'as') {
+        const named = readIdent(text, skipSpace(text, maybeAs.end))
+        if (named) {
+          alias = named.name
+          cursor = named.end
+        }
+      } else if (maybeAs && !NOT_AN_ALIAS.has(maybeAs.name.toLowerCase())) {
+        alias = maybeAs.name
+        cursor = maybeAs.end
+      }
+
+      out.push({ schema, table, alias })
+
+      cursor = skipSpace(text, cursor)
+      if (text[cursor] !== ',') break
+      pos = cursor + 1
+    }
+  }
+
+  return out
+}
+
 /** Formats a value the way the grid and clipboard helpers should show it. */
 export function displayValue(value: CellValue): string {
   if (value === null || value === undefined) return 'NULL'

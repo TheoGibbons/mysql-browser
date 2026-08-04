@@ -382,13 +382,11 @@ export function ConnectionView({ conn }: Props): JSX.Element {
             onCommit={() => void persistMeta(sessionId)}
           />
           <div className="pane" style={{ height: layout.historyHeight, flex: 'none' }}>
-            <div className="pane-head">
-              <span className="pane-title">History</span>
-              <div className="spacer" />
-              <span className="hint">{conn.history.length} entries</span>
-            </div>
             <HistoryView
               entries={conn.history}
+              widths={layout.historyColumns}
+              onResize={(historyColumns) => setLayout(sessionId, { historyColumns })}
+              onResizeCommit={() => void persistMeta(sessionId)}
               onUseSql={(sql) => openTab({ sql, title: 'From history' })}
             />
           </div>
@@ -559,6 +557,9 @@ function TabContent({
           apiRef={editorApi}
           completionSchema={completionSchema}
           defaultSchema={conn.activeSchema}
+          onNeedSchemaColumns={(schema) =>
+            void useAppStore.getState().loadSchemaColumns(conn.sessionId, schema)
+          }
           background={isValidHex(conn.config.color) ? tint(conn.config.color!, 0.14) : undefined}
         />
       </div>

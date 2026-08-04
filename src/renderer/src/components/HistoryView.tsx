@@ -1,6 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { HistoryEntry } from '@shared/types'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { HistoryColumnWidths, HistoryEntry } from '@shared/types'
+import { DEFAULT_HISTORY_COLUMNS } from '@shared/types'
 import { useContextMenu } from './ui/ContextMenu'
+
+/** Status icon gutter — not resizable, it only ever holds a ✓ or a !. */
+const GUTTER_WIDTH = 26
+const MIN_COL_WIDTH = 30
+
+type ResizableColumn = keyof HistoryColumnWidths
 
 /** `1 sec ago`, `2 mins ago`, … refreshed every second. */
 function relativeTime(from: number, now: number): string {
@@ -28,14 +35,38 @@ function formatDuration(ms: number | null): string {
 
 interface Props {
   entries: HistoryEntry[]
+  widths: HistoryColumnWidths | undefined
+  onResize(widths: HistoryColumnWidths): void
+  /** Fired once when a drag ends, so the new widths are persisted just once. */
+  onResizeCommit(): void
   onUseSql(sql: string): void
 }
 
-export function HistoryView({ entries, onUseSql }: Props): JSX.Element {
+export function HistoryView({
+  entries,
+  widths,
+  onResize,
+  onResizeCommit,
+  onUseSql
+}: Props): JSX.Element {
   const menu = useContextMenu()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [now, setNow] = useState(() => Date.now())
   const atBottomRef = useRef(true)
+  const resizeRef = useRef<{ col: ResizableColumn; startX: number; startWidth: number } | null>(null)
+
+  // Sessions saved before the columns were resizable have no widths stored.
+  const size = useMemo<HistoryColumnWidths>(
+    () => ({ ...DEFAULT_HISTORY_COLUMNS, ...(widths ?? {}) }),
+    [widths]
+  )
+  const sizeRef = useRef(size)
+  sizeRef.current = size
+
+  const onResizeRef = useRef(onResize)
+  onResizeRef.current = onResize
+  const onCommitRef = useRef(onResizeCommit)
+  onCommitRef.current = onResizeCommit
 
   // The relative-time column and the running-query elapsed time both need this.
   useEffect(() => {
@@ -55,31 +86,74 @@ export function HistoryView({ entries, onUseSql }: Props): JSX.Element {
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
   }
 
+  // --- column resizing ----------------------------------------------------
+
+  useEffect(() => {
+    const move = (e: PointerEvent): void => {
+      const resize = resizeRef.current
+      if (!resize) return
+      const next = Math.max(MIN_COL_WIDTH, resize.startWidth + (e.clientX - resize.startX))
+      onResizeRef.current({ ...sizeRef.current, [resize.col]: Math.round(next) })
+    }
+    const up = (): void => {
+      if (!resizeRef.current) return
+      resizeRef.current = null
+      document.body.classList.remove('resizing-col')
+      onCommitRef.current()
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      document.body.classList.remove('resizing-col')
+    }
+  }, [])
+
+  const startResize = (col: ResizableColumn) => (e: React.PointerEvent) => {
+    e.preventDefault()
+    resizeRef.current = { col, startX: e.clientX, startWidth: size[col] }
+    document.body.classList.add('resizing-col')
+  }
+
+  const header = (col: ResizableColumn, label: string): JSX.Element => (
+    <th>
+      {label}
+      <span className="col-resizer" onPointerDown={startResize(col)} />
+    </th>
+  )
+
+  const totalWidth =
+    GUTTER_WIDTH + size.seq + size.time + size.action + size.message + size.duration
+
   return (
     <div className="grid-wrap" ref={scrollRef} onScroll={onScroll}>
-      <table className="history-table">
+      <table className="history-table" style={{ width: totalWidth, minWidth: '100%' }}>
         <colgroup>
-          <col style={{ width: 26 }} />
-          <col style={{ width: 46 }} />
-          <col style={{ width: 92 }} />
+          <col style={{ width: GUTTER_WIDTH }} />
+          <col style={{ width: size.seq }} />
+          <col style={{ width: size.time }} />
+          <col style={{ width: size.action }} />
+          <col style={{ width: size.message }} />
+          <col style={{ width: size.duration }} />
+          {/* Soaks up any width left over when the pane is wider than the columns. */}
           <col />
-          <col style={{ width: 240 }} />
-          <col style={{ width: 150 }} />
         </colgroup>
         <thead>
           <tr>
             <th />
-            <th>#</th>
-            <th>Time</th>
-            <th>Action</th>
-            <th>Message</th>
-            <th>Duration / Fetch</th>
+            {header('seq', '#')}
+            {header('time', 'Time')}
+            {header('action', 'Action')}
+            {header('message', 'Message')}
+            {header('duration', 'Duration / Fetch')}
+            <th className="filler" />
           </tr>
         </thead>
         <tbody>
           {entries.length === 0 && (
             <tr>
-              <td colSpan={6} style={{ color: 'var(--text-dim)', padding: '6px 8px' }}>
+              <td colSpan={7} style={{ color: 'var(--text-dim)', padding: '6px 8px' }}>
                 Queries you run appear here.
               </td>
             </tr>
@@ -135,6 +209,7 @@ export function HistoryView({ entries, onUseSql }: Props): JSX.Element {
                         entry.fetchMs !== null ? ` / ${formatDuration(entry.fetchMs)}` : ''
                       }`}
                 </td>
+                <td className="filler" />
               </tr>
             )
           })}

@@ -68,7 +68,7 @@ interface AppState {
   openConnection(config: ConnectionConfig, connect: boolean): Promise<string>
   closeConnTab(sessionId: string): Promise<void>
   setActiveSession(sessionId: string | null): void
-  reconnect(sessionId: string): Promise<void>
+  reconnect(sessionId: string): Promise<boolean>
   applyStatus(sessionId: string, status: SessionStatus, message?: string, serverVersion?: string): void
 
   refreshSchemas(sessionId: string, force?: boolean): Promise<void>
@@ -129,6 +129,9 @@ function makeTab(options: NewTabOptions, index: number): QueryTabState {
     updatedAt: Date.now()
   }
 }
+
+/** `sessionId schema` keys whose column fetch is already in flight. */
+const columnsInflight = new Set<string>()
 
 export const useAppStore = create<AppState>((set, get) => {
   /** Applies `fn` to one connection tab and returns the new state. */
@@ -300,7 +303,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     async reconnect(sessionId) {
       const tab = conn(sessionId)
-      if (!tab) return
+      if (!tab) return false
       const started = Date.now()
       const historyId = get().pushHistory(sessionId, {
         status: 'running',
@@ -318,12 +321,14 @@ export const useAppStore = create<AppState>((set, get) => {
           durationMs: Date.now() - started
         })
         await get().refreshSchemas(sessionId, true)
+        return true
       } catch (err) {
         get().updateHistory(sessionId, historyId, {
           status: 'error',
           message: (err as Error).message,
           durationMs: Date.now() - started
         })
+        return false
       }
     },
 
@@ -370,6 +375,10 @@ export const useAppStore = create<AppState>((set, get) => {
       if (!tab || tab.status !== 'connected') return
       // Cached already if any table from this schema is present.
       if (Object.keys(tab.columnsCache).some((k) => k.startsWith(`${schema}.`))) return
+      // Completion asks on every keystroke, so collapse concurrent requests.
+      const inflightKey = `${sessionId} ${schema}`
+      if (columnsInflight.has(inflightKey)) return
+      columnsInflight.add(inflightKey)
       try {
         const columns = await window.api.session.schemaColumns(sessionId, schema)
         patchConn(sessionId, (t) => {
@@ -379,6 +388,8 @@ export const useAppStore = create<AppState>((set, get) => {
         })
       } catch {
         /* completion is best-effort */
+      } finally {
+        columnsInflight.delete(inflightKey)
       }
     },
 
@@ -477,18 +488,25 @@ export const useAppStore = create<AppState>((set, get) => {
       const trimmed = sql.trim()
       if (!trimmed) return
 
-      if (tab.status !== 'connected') {
-        get().pushHistory(sessionId, {
-          status: 'error',
-          startedAt: Date.now(),
-          action: trimmed,
-          message: 'Not connected. Use Reconnect to open the connection.',
-          durationMs: null,
-          fetchMs: null
-        })
-        return
-      }
       if (tab.running[tabId]) return
+
+      if (tab.status !== 'connected') {
+        // The session can be left disconnected by a dropped socket the worker
+        // could not repair on its own. Reopen it here rather than making the
+        // user hunt for the Reconnect button before every query.
+        const recovered = await get().reconnect(sessionId)
+        if (!recovered) {
+          get().pushHistory(sessionId, {
+            status: 'error',
+            startedAt: Date.now(),
+            action: trimmed,
+            message: 'Not connected. Use Reconnect to open the connection.',
+            durationMs: null,
+            fetchMs: null
+          })
+          return
+        }
+      }
 
       const statements = splitStatements(trimmed)
       const toRun = options.explain
