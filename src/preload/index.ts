@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   ConnectionConfig,
+  ConnectionGroup,
   IpcResult,
   Preferences,
   QueryOutcome,
@@ -40,12 +41,27 @@ const api = {
     remove: (id: string) => call<ConnectionConfig[]>('connections:delete', id),
     test: (config: ConnectionConfig) =>
       call<{ serverVersion: string; latencyMs: number }>('connections:test', config),
-    exportAll: () => call<ConnectionConfig[]>('connections:export'),
-    importAll: (items: unknown) =>
-      call<{ connections: ConnectionConfig[]; added: number; updated: number; skipped: number }>(
-        'connections:import',
-        items
-      )
+    /** The complete display order, each entry with the group it now sits in. */
+    arrange: (placements: { id: string; groupId: string | null }[]) =>
+      call<ConnectionConfig[]>('connections:arrange', placements),
+    exportAll: () =>
+      call<{ connections: ConnectionConfig[]; groups: ConnectionGroup[] }>('connections:export'),
+    importAll: (payload: unknown) =>
+      call<{
+        connections: ConnectionConfig[]
+        groups: ConnectionGroup[]
+        added: number
+        updated: number
+        skipped: number
+      }>('connections:import', payload)
+  },
+
+  groups: {
+    list: () => call<ConnectionGroup[]>('groups:list'),
+    save: (groups: ConnectionGroup[]) => call<ConnectionGroup[]>('groups:save', groups),
+    /** Also deletes every connection inside the group. */
+    remove: (id: string) =>
+      call<{ connections: ConnectionConfig[]; groups: ConnectionGroup[] }>('groups:delete', id)
   },
 
   prefs: {

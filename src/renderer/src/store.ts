@@ -3,6 +3,7 @@ import {
   DEFAULT_LAYOUT,
   DEFAULT_PREFERENCES,
   type ConnectionConfig,
+  type ConnectionGroup,
   type HistoryEntry,
   type Preferences,
   type QueryTabState,
@@ -49,6 +50,8 @@ export interface ConnTab {
 
 interface AppState {
   connections: ConnectionConfig[]
+  /** Home-screen groups, in display order. */
+  groups: ConnectionGroup[]
   prefs: Preferences
   connTabs: ConnTab[]
   /** `null` means the Home tab is showing. */
@@ -59,6 +62,7 @@ interface AppState {
 
   init(): Promise<void>
   setConnections(connections: ConnectionConfig[]): void
+  setGroups(groups: ConnectionGroup[]): void
   setPrefs(prefs: Preferences): Promise<void>
 
   openConnection(config: ConnectionConfig, connect: boolean): Promise<string>
@@ -139,6 +143,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
   return {
     connections: [],
+    groups: [],
     prefs: DEFAULT_PREFERENCES,
     connTabs: [],
     activeSessionId: null,
@@ -150,11 +155,12 @@ export const useAppStore = create<AppState>((set, get) => {
       // the page is loaded in a plain browser (App renders a notice instead).
       if (typeof window === 'undefined' || !window.api) return
 
-      const [connections, prefs] = await Promise.all([
+      const [connections, groups, prefs] = await Promise.all([
         window.api.connections.list(),
+        window.api.groups.list(),
         window.api.prefs.get()
       ])
-      set({ connections, prefs, ready: true })
+      set({ connections, groups, prefs, ready: true })
 
       window.api.session.onStatus((event) => {
         get().applyStatus(event.sessionId, event.status, event.message, event.serverVersion)
@@ -170,6 +176,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return config ? { ...tab, config, name: config.name } : tab
         })
       }))
+    },
+
+    setGroups(groups) {
+      set({ groups })
     },
 
     async setPrefs(prefs) {

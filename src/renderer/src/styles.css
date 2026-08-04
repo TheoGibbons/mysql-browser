@@ -1244,6 +1244,80 @@ textarea.field {
   overflow: auto;
   background: var(--bg-panel);
   padding: 22px 28px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* `margin-top: auto` pins the buttons to the bottom of the tab when the grid is
+   short, and lets them follow the grid once it scrolls. */
+.home-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 20px;
+}
+
+.home-foot .btn {
+  min-width: 0;
+  height: 24px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* --- hover/click dropdown button --- */
+
+.menu-btn {
+  position: relative;
+}
+
+.menu-btn-caret {
+  color: var(--text-dim);
+  font-size: 9px;
+}
+
+/* Drops upwards: the trigger sits at the bottom of its container. It butts up
+   against the button (`bottom: 100%`) and holds the visual gap as its own
+   transparent padding, so the pointer stays inside the menu on the way up. */
+.menu-btn-pop {
+  position: absolute;
+  right: 0;
+  bottom: 100%;
+  z-index: 1000;
+  min-width: 100%;
+  padding-bottom: 3px;
+}
+
+.menu-btn-panel {
+  background: #fbfbfb;
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  border-radius: 3px;
+  padding: 3px 0;
+  font-size: var(--fs-sm);
+}
+
+.menu-btn-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 14px 4px 10px;
+  white-space: nowrap;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+/* A light hover, not the context menu's solid blue: these items carry dark
+   icons that would be lost against it. */
+.menu-btn-item:hover {
+  background: var(--bg-hover);
 }
 
 .home-head {
@@ -1361,6 +1435,132 @@ textarea.field {
   padding: 40px 0;
   text-align: center;
   line-height: 1.7;
+}
+
+/* ---------------------------------------------------- home page: groups */
+
+/* Two columns, so a group is never wider than half the window; one column
+   once that would squeeze the cards inside below a readable width. */
+.group-board {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+@media (max-width: 780px) {
+  .group-board {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.conn-group {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-alt-row);
+  overflow: hidden;
+}
+
+.conn-group.dragging {
+  opacity: 0.45;
+}
+
+/* A card is hovering over the group's open space. */
+.conn-group.drop-target {
+  border-color: var(--accent);
+}
+
+.conn-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 5px 3px 4px;
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border-light);
+  cursor: grab;
+}
+
+.conn-group.collapsed .conn-group-head {
+  border-bottom: none;
+}
+
+.group-toggle {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  flex: none;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-panel);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.group-toggle:hover {
+  background: var(--bg-hover);
+}
+
+.group-count {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+/* Drag affordance for the header — the whole header is the handle. */
+.group-grip {
+  color: #b4b4b4;
+  font-size: 9px;
+  letter-spacing: -1px;
+}
+
+.conn-group-body {
+  padding: 8px;
+}
+
+/* Cards must fit inside a half-width panel, so they may shrink below the
+   250px the top-level grid asks for. */
+.conn-group-body .conn-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr));
+}
+
+/* The ungrouped area above the board. */
+.conn-zone {
+  margin-bottom: 12px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+}
+
+.conn-zone.drop-target {
+  border-color: var(--accent);
+}
+
+.zone-empty {
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  text-align: center;
+  padding: 14px 8px;
+}
+
+/* Insertion markers: a bar down the edge the item would land on. */
+.conn-card.drop-before,
+.conn-group.drop-before {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.conn-card.drop-after,
+.conn-group.drop-after {
+  box-shadow: inset -3px 0 0 var(--accent);
+}
+
+.conn-card.dragging {
+  opacity: 0.4;
+}
+
+.conn-card[draggable='true'] {
+  cursor: grab;
 }
 
 /* ------------------------------------------------------ designer / misc */

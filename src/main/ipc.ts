@@ -3,6 +3,7 @@
 import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import type {
   ConnectionConfig,
+  ConnectionGroup,
   IpcResult,
   Preferences,
   QueryTabState,
@@ -46,6 +47,16 @@ async function effectivePrefs(config: ConnectionConfig): Promise<Preferences> {
   return { ...global, ...(config.prefs ?? {}) }
 }
 
+/** Closes every open session belonging to a connection that is about to vanish. */
+async function closeSessionsFor(connectionId: string): Promise<void> {
+  for (const [sessionId, session] of [...sessions]) {
+    if (session['config']?.id === connectionId) {
+      await session.close()
+      sessions.delete(sessionId)
+    }
+  }
+}
+
 function requireSession(sessionId: string): Session {
   const session = sessions.get(sessionId)
   if (!session) throw new Error('This connection tab is no longer open')
@@ -58,19 +69,29 @@ export function registerIpc(): void {
   handle('connections:list', () => store.listConnections())
   handle('connections:save', (config: ConnectionConfig) => store.saveConnection(config))
   handle('connections:delete', async (id: string) => {
-    for (const [sessionId, session] of [...sessions]) {
-      if (session['config']?.id === id) {
-        await session.close()
-        sessions.delete(sessionId)
-      }
-    }
+    await closeSessionsFor(id)
     return store.deleteConnection(id)
   })
   handle('connections:test', async (config: ConnectionConfig) =>
     testConnection(config, await effectivePrefs(config))
   )
+  handle('connections:arrange', (placements: { id: string; groupId: string | null }[]) =>
+    store.arrangeConnections(placements)
+  )
   handle('connections:export', () => store.exportConnections())
-  handle('connections:import', (items: unknown) => store.importConnections(items))
+  handle('connections:import', (payload: unknown) => store.importConnections(payload))
+
+  // --- connection groups -------------------------------------------------
+
+  handle('groups:list', () => store.listGroups())
+  handle('groups:save', (groups: ConnectionGroup[]) => store.saveGroups(groups))
+  handle('groups:delete', async (id: string) => {
+    // Deleting a group deletes the connections inside it, so their live
+    // sessions have to go first — same as a single connection delete.
+    const members = (await store.listConnections()).filter((c) => c.groupId === id)
+    for (const member of members) await closeSessionsFor(member.id)
+    return store.deleteGroup(id)
+  })
 
   // --- preferences -------------------------------------------------------
 

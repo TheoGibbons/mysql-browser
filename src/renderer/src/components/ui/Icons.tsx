@@ -104,6 +104,22 @@ export const PlusIcon = ({ size = 14, color = '#3a3a3a' }: IconProps): JSX.Eleme
     </>
   )
 
+/** A folder with a plus — "add a group" on the home screen. */
+export const NewGroupIcon = ({ size = 14, color = '#3a3a3a' }: IconProps): JSX.Element =>
+  svg(
+    size,
+    <>
+      <path
+        d="M1.6 3.4h4.3l1.2 1.5h7.3v7.7H1.6V3.4Z"
+        fill="none"
+        stroke={color}
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
+      <path d="M8.4 6.6v4M6.4 8.6h4" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+    </>
+  )
+
 export const SettingsIcon = ({ size = 12, color = '#5a5a5a' }: IconProps): JSX.Element =>
   svg(
     size,

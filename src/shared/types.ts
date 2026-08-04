@@ -48,7 +48,23 @@ export interface ConnectionConfig {
    */
   confirmModifying?: boolean
 
+  /**
+   * Home-screen group this connection sits in. Unset (or pointing at a group
+   * that no longer exists) means it shows in the ungrouped area at the top.
+   */
+  groupId?: string | null
+
   createdAt: number
+}
+
+/**
+ * A home-screen container for connections. Groups are deliberately unnamed —
+ * they exist to cluster and collapse cards, so only their order, membership and
+ * collapsed state are stored.
+ */
+export interface ConnectionGroup {
+  id: string
+  collapsed?: boolean
 }
 
 export interface Preferences {

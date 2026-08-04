@@ -2,6 +2,7 @@
  * File-backed storage under the app's userData directory.
  *
  *   connections.json                    saved connections (secrets encrypted)
+ *   groups.json                         home-screen groups, in display order
  *   preferences.json                    global preferences
  *   sessions/<connectionId>/meta.json   schema cache, open tabs, layout
  *   sessions/<connectionId>/tabs/*.json one file per tab (spec: one file per tab)
@@ -15,6 +16,7 @@ import {
   DEFAULT_LAYOUT,
   DEFAULT_PREFERENCES,
   type ConnectionConfig,
+  type ConnectionGroup,
   type Preferences,
   type QueryTabState,
   type SessionMeta
@@ -126,22 +128,98 @@ export async function deleteConnection(id: string): Promise<ConnectionConfig[]> 
   return next.map(unprotect)
 }
 
+/**
+ * Applies a home-screen arrangement in one write: `placements` is the complete
+ * list of connection ids in display order, each with the group it now sits in.
+ * Ids the renderer did not mention (e.g. added by another window mid-drag) keep
+ * their data and are appended in their existing order.
+ */
+export async function arrangeConnections(
+  placements: { id: string; groupId: string | null }[]
+): Promise<ConnectionConfig[]> {
+  const stored = await readJson<ConnectionConfig[]>(file('connections.json'), [])
+  const remaining = new Map(stored.map((c) => [c.id, c]))
+
+  const next: ConnectionConfig[] = []
+  for (const placement of Array.isArray(placements) ? placements : []) {
+    const existing = placement && remaining.get(placement.id)
+    if (!existing) continue
+    remaining.delete(placement.id)
+    next.push({ ...existing, groupId: placement.groupId ?? null })
+  }
+  next.push(...remaining.values())
+
+  await writeJson(file('connections.json'), next)
+  return next.map(unprotect)
+}
+
+// ---------------------------------------------------------------------------
+// Groups
+// ---------------------------------------------------------------------------
+
+/** Drops malformed/duplicate entries so a hand-edited file can't break the home screen. */
+function cleanGroups(groups: unknown): ConnectionGroup[] {
+  const byId = new Map<string, ConnectionGroup>()
+  for (const raw of Array.isArray(groups) ? groups : []) {
+    const group = raw as Partial<ConnectionGroup>
+    if (!group || typeof group.id !== 'string' || group.id.trim() === '') continue
+    byId.set(group.id, { id: group.id, collapsed: group.collapsed === true })
+  }
+  return [...byId.values()]
+}
+
+export async function listGroups(): Promise<ConnectionGroup[]> {
+  return cleanGroups(await readJson<unknown>(file('groups.json'), []))
+}
+
+/** Full replace — adding, reordering and collapsing all come through here. */
+export async function saveGroups(groups: unknown): Promise<ConnectionGroup[]> {
+  const clean = cleanGroups(groups)
+  await writeJson(file('groups.json'), clean)
+  return clean
+}
+
+/** Removes a group *and* every connection inside it (the renderer confirms first). */
+export async function deleteGroup(
+  id: string
+): Promise<{ connections: ConnectionConfig[]; groups: ConnectionGroup[] }> {
+  const stored = await readJson<ConnectionConfig[]>(file('connections.json'), [])
+  const kept = stored.filter((c) => c.groupId !== id)
+  const removed = stored.filter((c) => c.groupId === id)
+  await writeJson(file('connections.json'), kept)
+  for (const config of removed) {
+    await fsp
+      .rm(file('sessions', safeId(config.id)), { recursive: true, force: true })
+      .catch(() => undefined)
+  }
+
+  const groups = (await listGroups()).filter((g) => g.id !== id)
+  await writeJson(file('groups.json'), groups)
+  return { connections: kept.map(unprotect), groups }
+}
+
 // ---------------------------------------------------------------------------
 // Import / export (connection definitions only — never tabs or schema cache)
 // ---------------------------------------------------------------------------
 
-/** All connections with secrets stripped, ready to serialise to a file. */
-export async function exportConnections(): Promise<ConnectionConfig[]> {
-  const connections = await listConnections()
-  return connections.map((c) => {
+export interface ConnectionsExport {
+  connections: ConnectionConfig[]
+  groups: ConnectionGroup[]
+}
+
+/** All connections and groups with secrets stripped, ready to serialise to a file. */
+export async function exportConnections(): Promise<ConnectionsExport> {
+  const connections = (await listConnections()).map((c) => {
     const copy = { ...c }
     for (const key of SECRET_FIELDS) delete copy[key]
     return copy
   })
+  return { connections, groups: await listGroups() }
 }
 
 export interface ImportResult {
   connections: ConnectionConfig[]
+  groups: ConnectionGroup[]
   added: number
   updated: number
   skipped: number
@@ -151,9 +229,24 @@ export interface ImportResult {
  * Merges imported connections by id. Existing secrets are preserved when the
  * imported entry has none (the export strips them), so re-importing never wipes
  * a saved password. Unknown/invalid entries are skipped.
+ *
+ * Accepts either the current `{ connections, groups }` payload or a bare array
+ * of connections (what exports before groups existed contained).
  */
 export async function importConnections(incoming: unknown): Promise<ImportResult> {
-  const items = Array.isArray(incoming) ? incoming : []
+  const payload = (Array.isArray(incoming) ? { connections: incoming } : incoming ?? {}) as {
+    connections?: unknown
+    groups?: unknown
+  }
+  const items = Array.isArray(payload.connections) ? payload.connections : []
+
+  // Imported groups join the existing ones, keeping their own relative order.
+  const groupsById = new Map((await listGroups()).map((g) => [g.id, g]))
+  for (const group of cleanGroups(payload.groups)) {
+    groupsById.set(group.id, { ...groupsById.get(group.id), ...group })
+  }
+  const groups = [...groupsById.values()]
+
   // Work in plaintext, then encrypt once on write.
   const byId = new Map<string, ConnectionConfig>()
   for (const c of await listConnections()) byId.set(c.id, c)
@@ -187,6 +280,12 @@ export async function importConnections(incoming: unknown): Promise<ImportResult
       createdAt: existing?.createdAt ?? (typeof cfg.createdAt === 'number' ? cfg.createdAt : Date.now())
     } as ConnectionConfig
 
+    // A group reference only survives if that group actually exists after the
+    // merge; otherwise the connection lands in the ungrouped area.
+    merged.groupId = typeof merged.groupId === 'string' && groupsById.has(merged.groupId)
+      ? merged.groupId
+      : null
+
     // Secrets: use an imported plaintext secret if one was included, else keep
     // whatever the existing connection already had.
     for (const key of SECRET_FIELDS) {
@@ -207,7 +306,8 @@ export async function importConnections(incoming: unknown): Promise<ImportResult
 
   const plain = [...byId.values()]
   await writeJson(file('connections.json'), plain.map(protect))
-  return { connections: plain, added, updated, skipped }
+  await writeJson(file('groups.json'), groups)
+  return { connections: plain, groups, added, updated, skipped }
 }
 
 // ---------------------------------------------------------------------------
