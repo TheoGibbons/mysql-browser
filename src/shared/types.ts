@@ -90,6 +90,34 @@ export interface ConnectionGroup {
   collapsed?: boolean
 }
 
+/**
+ * The passwords in a connections export, encrypted with a key derived from a
+ * passphrase the user types. The at-rest encryption (`safeStorage`, DPAPI on
+ * Windows) is bound to the machine and account that wrote it, so a copy of the
+ * stored ciphertext is worthless on the machine being migrated to — the secrets
+ * have to be re-wrapped in something the user can carry.
+ *
+ * The KDF parameters travel with the file so tightening them later cannot
+ * strand an older export.
+ */
+export interface ConnectionSecretsEnvelope {
+  v: 1
+  kdf: 'scrypt'
+  /** base64 */
+  salt: string
+  N: number
+  r: number
+  p: number
+  keyLength: number
+  cipher: 'aes-256-gcm'
+  /** base64 */
+  iv: string
+  /** base64 GCM authentication tag — also what makes a wrong passphrase detectable. */
+  tag: string
+  /** base64 ciphertext of `{ [connectionId]: { password?, sshPassword?, sshPassphrase? } }`. */
+  data: string
+}
+
 export interface Preferences {
   // General
   autoSaveIntervalSec: number

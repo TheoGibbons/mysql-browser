@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   ConnectionConfig,
   ConnectionGroup,
+  ConnectionSecretsEnvelope,
   IpcResult,
   Preferences,
   QueryOutcome,
@@ -46,16 +47,27 @@ const api = {
     /** The complete display order, each entry with the group it now sits in. */
     arrange: (placements: { id: string; groupId: string | null }[]) =>
       call<ConnectionConfig[]>('connections:arrange', placements),
-    exportAll: () =>
-      call<{ connections: ConnectionConfig[]; groups: ConnectionGroup[] }>('connections:export'),
-    importAll: (payload: unknown) =>
+    /** With a passphrase the export carries every password in `secrets`. */
+    exportAll: (passphrase?: string) =>
       call<{
         connections: ConnectionConfig[]
         groups: ConnectionGroup[]
-        added: number
-        updated: number
-        skipped: number
-      }>('connections:import', payload)
+        secrets?: ConnectionSecretsEnvelope
+        withSecrets: number
+      }>('connections:export', passphrase),
+    /** Resolves to `{ badPassphrase: true }` when `secrets` will not open — retryable. */
+    importAll: (payload: unknown, passphrase?: string) =>
+      call<
+        | {
+            connections: ConnectionConfig[]
+            groups: ConnectionGroup[]
+            added: number
+            updated: number
+            skipped: number
+            restored: number
+          }
+        | { badPassphrase: true }
+      >('connections:import', payload, passphrase)
   },
 
   groups: {

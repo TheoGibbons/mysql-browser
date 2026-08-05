@@ -8,6 +8,7 @@
  *   sessions/<connectionId>/tabs/*.json one file per tab (spec: one file per tab)
  */
 
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
@@ -18,6 +19,7 @@ import {
   engineOf,
   type ConnectionConfig,
   type ConnectionGroup,
+  type ConnectionSecretsEnvelope,
   type Preferences,
   type QueryTabState,
   type SessionMeta
@@ -25,7 +27,14 @@ import {
 
 /** Marks a value as ciphertext so plaintext fallbacks stay readable. */
 const ENC_PREFIX = 'enc:v1:'
+/**
+ * Fields encrypted at rest and carried in an export's secrets envelope.
+ * `sshKeyFile` is deliberately not one of them: it is a path, not a secret, and
+ * it travels as plaintext so the user can see and fix it after moving machines.
+ */
 const SECRET_FIELDS = ['password', 'sshPassword', 'sshPassphrase'] as const
+
+type SecretField = (typeof SECRET_FIELDS)[number]
 
 let rootDir = ''
 
@@ -100,6 +109,104 @@ function unprotect(config: ConnectionConfig): ConnectionConfig {
     if (value) out[key] = decrypt(value)
   }
   return out
+}
+
+// --- portable secrets (export files) ---------------------------------------
+
+interface ScryptParams {
+  N: number
+  r: number
+  p: number
+  keyLength: number
+}
+
+/** ~32 MB and a few hundred ms to derive — deliberately slow to brute-force. */
+const SCRYPT: ScryptParams = { N: 32768, r: 8, p: 1, keyLength: 32 }
+const SCRYPT_MAXMEM = 96 * 1024 * 1024
+
+/** Thrown when the passphrase cannot open an export's secrets envelope. */
+export class PassphraseError extends Error {
+  readonly code = 'BAD_PASSPHRASE'
+  constructor(message: string) {
+    super(message)
+    this.name = 'PassphraseError'
+  }
+}
+
+type SecretsMap = Record<string, Partial<Record<SecretField, string>>>
+
+function deriveKey(passphrase: string, salt: Buffer, params: ScryptParams): Buffer {
+  // NFKC so a passphrase typed on another machine/keyboard derives the same key.
+  return scryptSync(passphrase.normalize('NFKC'), salt, params.keyLength, {
+    N: params.N,
+    r: params.r,
+    p: params.p,
+    maxmem: SCRYPT_MAXMEM
+  })
+}
+
+function sealSecrets(secrets: SecretsMap, passphrase: string): ConnectionSecretsEnvelope {
+  const salt = randomBytes(16)
+  const iv = randomBytes(12)
+  const cipher = createCipheriv('aes-256-gcm', deriveKey(passphrase, salt, SCRYPT), iv)
+  const data = Buffer.concat([cipher.update(JSON.stringify(secrets), 'utf8'), cipher.final()])
+  return {
+    v: 1,
+    kdf: 'scrypt',
+    salt: salt.toString('base64'),
+    N: SCRYPT.N,
+    r: SCRYPT.r,
+    p: SCRYPT.p,
+    keyLength: SCRYPT.keyLength,
+    cipher: 'aes-256-gcm',
+    iv: iv.toString('base64'),
+    tag: cipher.getAuthTag().toString('base64'),
+    data: data.toString('base64')
+  }
+}
+
+function openSecrets(envelope: unknown, passphrase: string): SecretsMap {
+  const e = envelope as Partial<ConnectionSecretsEnvelope>
+  if (!e || typeof e !== 'object' || e.kdf !== 'scrypt' || e.cipher !== 'aes-256-gcm') {
+    throw new Error('This export stores its passwords in a format this version cannot read.')
+  }
+  // The parameters come from the file, so they are only trusted within reason —
+  // an absurd N would otherwise be a way to hang the app on a hostile export.
+  const params = {
+    N: typeof e.N === 'number' ? e.N : SCRYPT.N,
+    r: typeof e.r === 'number' ? e.r : SCRYPT.r,
+    p: typeof e.p === 'number' ? e.p : SCRYPT.p,
+    keyLength: 32
+  }
+  if (params.N < 1024 || params.N > 1 << 20 || params.r < 1 || params.r > 32 || params.p < 1 || params.p > 16) {
+    throw new Error('This export declares key-derivation settings outside the supported range.')
+  }
+
+  let json: string
+  try {
+    const decipher = createDecipheriv(
+      'aes-256-gcm',
+      deriveKey(passphrase, Buffer.from(String(e.salt), 'base64'), params),
+      Buffer.from(String(e.iv), 'base64')
+    )
+    decipher.setAuthTag(Buffer.from(String(e.tag), 'base64'))
+    json = Buffer.concat([
+      decipher.update(Buffer.from(String(e.data), 'base64')),
+      decipher.final()
+    ]).toString('utf8')
+  } catch {
+    // GCM cannot tell a wrong key from a tampered file, and for this feature the
+    // first is overwhelmingly the likely one.
+    throw new PassphraseError('That passphrase does not match this file.')
+  }
+
+  try {
+    const parsed = JSON.parse(json)
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('shape')
+    return parsed as SecretsMap
+  } catch {
+    throw new PassphraseError('That passphrase does not match this file.')
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -206,16 +313,41 @@ export async function deleteGroup(
 export interface ConnectionsExport {
   connections: ConnectionConfig[]
   groups: ConnectionGroup[]
+  /** Present only when a passphrase was supplied. */
+  secrets?: ConnectionSecretsEnvelope
+  /** How many connections contributed at least one password to `secrets`. */
+  withSecrets: number
 }
 
-/** All connections and groups with secrets stripped, ready to serialise to a file. */
-export async function exportConnections(): Promise<ConnectionsExport> {
-  const connections = (await listConnections()).map((c) => {
+/**
+ * All connections and groups, ready to serialise to a file. Secrets never sit
+ * in the connection objects themselves; with a passphrase they are collected
+ * into a separate encrypted envelope, and without one they are simply dropped.
+ */
+export async function exportConnections(passphrase?: string): Promise<ConnectionsExport> {
+  const all = await listConnections()
+  const connections = all.map((c) => {
     const copy = { ...c }
     for (const key of SECRET_FIELDS) delete copy[key]
     return copy
   })
-  return { connections, groups: await listGroups() }
+  const groups = await listGroups()
+  if (!passphrase) return { connections, groups, withSecrets: 0 }
+
+  const secrets: SecretsMap = {}
+  let withSecrets = 0
+  for (const c of all) {
+    const entry: Partial<Record<SecretField, string>> = {}
+    for (const key of SECRET_FIELDS) {
+      const value = c[key]
+      if (typeof value === 'string' && value !== '') entry[key] = value
+    }
+    if (Object.keys(entry).length > 0) {
+      secrets[c.id] = entry
+      withSecrets++
+    }
+  }
+  return { connections, groups, secrets: sealSecrets(secrets, passphrase), withSecrets }
 }
 
 export interface ImportResult {
@@ -224,6 +356,17 @@ export interface ImportResult {
   added: number
   updated: number
   skipped: number
+  /** Connections that got at least one password back from the secrets envelope. */
+  restored: number
+}
+
+/**
+ * A wrong passphrase is an expected, retryable outcome rather than a failure,
+ * and it is reported as a value: a thrown error would lose its `code` crossing
+ * the context bridge, which reconstructs Errors from message and stack alone.
+ */
+export interface ImportRejected {
+  badPassphrase: true
 }
 
 /**
@@ -232,14 +375,31 @@ export interface ImportResult {
  * a saved password. Unknown/invalid entries are skipped.
  *
  * Accepts either the current `{ connections, groups }` payload or a bare array
- * of connections (what exports before groups existed contained).
+ * of connections (what exports before groups existed contained). A `secrets`
+ * envelope is opened with `passphrase` before anything is written, so a wrong
+ * passphrase leaves the stored connections untouched and can just be retried.
  */
-export async function importConnections(incoming: unknown): Promise<ImportResult> {
+export async function importConnections(
+  incoming: unknown,
+  passphrase?: string
+): Promise<ImportResult | ImportRejected> {
   const payload = (Array.isArray(incoming) ? { connections: incoming } : incoming ?? {}) as {
     connections?: unknown
     groups?: unknown
+    secrets?: unknown
   }
   const items = Array.isArray(payload.connections) ? payload.connections : []
+
+  // Decrypt up front: nothing below this point should run on a bad passphrase.
+  let unsealed: SecretsMap = {}
+  if (payload.secrets && passphrase) {
+    try {
+      unsealed = openSecrets(payload.secrets, passphrase)
+    } catch (err) {
+      if (err instanceof PassphraseError) return { badPassphrase: true }
+      throw err
+    }
+  }
 
   // Imported groups join the existing ones, keeping their own relative order.
   const groupsById = new Map((await listGroups()).map((g) => [g.id, g]))
@@ -255,6 +415,7 @@ export async function importConnections(incoming: unknown): Promise<ImportResult
   let added = 0
   let updated = 0
   let skipped = 0
+  let restored = 0
 
   items.forEach((item, index) => {
     const cfg = item as Partial<ConnectionConfig>
@@ -288,11 +449,18 @@ export async function importConnections(incoming: unknown): Promise<ImportResult
       ? merged.groupId
       : null
 
-    // Secrets: use an imported plaintext secret if one was included, else keep
-    // whatever the existing connection already had.
+    // Secrets, most trustworthy source first: the envelope this import just
+    // decrypted, then a plaintext secret inlined by some older/hand-made file,
+    // then whatever the existing connection already had.
+    const sealed = unsealed[id] ?? {}
+    let restoredHere = false
     for (const key of SECRET_FIELDS) {
+      const fromEnvelope = sealed[key]
       const imported = (cfg as Record<string, unknown>)[key]
-      if (typeof imported === 'string' && imported !== '' && !imported.startsWith(ENC_PREFIX)) {
+      if (typeof fromEnvelope === 'string' && fromEnvelope !== '') {
+        merged[key] = fromEnvelope
+        restoredHere = true
+      } else if (typeof imported === 'string' && imported !== '' && !imported.startsWith(ENC_PREFIX)) {
         merged[key] = imported
       } else if (existing) {
         merged[key] = existing[key]
@@ -300,6 +468,7 @@ export async function importConnections(incoming: unknown): Promise<ImportResult
         delete merged[key]
       }
     }
+    if (restoredHere) restored++
 
     byId.set(id, merged)
     if (existing) updated++
@@ -309,7 +478,7 @@ export async function importConnections(incoming: unknown): Promise<ImportResult
   const plain = [...byId.values()]
   await writeJson(file('connections.json'), plain.map(protect))
   await writeJson(file('groups.json'), groups)
-  return { connections: plain, groups, added, updated, skipped }
+  return { connections: plain, groups, added, updated, skipped, restored }
 }
 
 // ---------------------------------------------------------------------------

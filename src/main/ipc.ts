@@ -98,8 +98,10 @@ export function registerIpc(): void {
   handle('connections:arrange', (placements: { id: string; groupId: string | null }[]) =>
     store.arrangeConnections(placements)
   )
-  handle('connections:export', () => store.exportConnections())
-  handle('connections:import', (payload: unknown) => store.importConnections(payload))
+  handle('connections:export', (passphrase?: string) => store.exportConnections(passphrase))
+  handle('connections:import', (payload: unknown, passphrase?: string) =>
+    store.importConnections(payload, passphrase)
+  )
 
   // --- connection groups -------------------------------------------------
 

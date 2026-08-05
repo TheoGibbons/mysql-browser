@@ -5,10 +5,18 @@ import { useAppStore } from '../store'
 import { useContextMenu } from './ui/ContextMenu'
 import { ExportIcon, ImportIcon, NewGroupIcon, PlusIcon, SearchIcon } from './ui/Icons'
 import { ConnectionDialog } from './ConnectionDialog'
+import { ExportOptionsDialog, ImportPassphraseDialog } from './PassphraseDialogs'
 import { Marquee } from './ui/Marquee'
 import { Modal } from './ui/Modal'
 import { newId } from '../lib/ids'
 import { isValidHex, readableDimColor, readableTextColor } from '../lib/color'
+
+/** A parsed export file, before the main process validates any of it. */
+interface ImportPayload {
+  connections?: unknown
+  groups?: unknown
+  secrets?: unknown
+}
 
 function endpoint(config: ConnectionConfig): string {
   const server =
@@ -270,7 +278,7 @@ function ImportExportMenu({
             <button
               className="menu-btn-item"
               role="menuitem"
-              title="Export all connections and groups to a JSON file (passwords are not included)"
+              title="Export all connections and groups to a JSON file, optionally including passwords"
               onClick={() => run(onExport)}
             >
               <ExportIcon size={13} /> Export all connections
@@ -304,18 +312,32 @@ export function HomePage(): JSX.Element {
   const [confirmDelete, setConfirmDelete] = useState<ConnectionConfig | null>(null)
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<ConnectionGroup | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [exportPrompt, setExportPrompt] = useState(false)
+  /** Set when the chosen import file carries passwords and needs a passphrase. */
+  const [importPrompt, setImportPrompt] = useState<{
+    payload: ImportPayload
+    error: string | null
+    busy: boolean
+  } | null>(null)
   const [drag, setDrag] = useState<DragItem | null>(null)
   const [dropHint, setDropHint] = useState<DropHint | null>(null)
   /** The live payload. `drag` is the same thing, one tick behind — see `beginDrag`. */
   const dragRef = useRef<DragItem | null>(null)
 
-  const exportConnections = async (): Promise<void> => {
+  /** Written to the file once the export options dialog has been answered. */
+  const writeExport = async (passphrase?: string): Promise<void> => {
     const now = new Date()
     const pad = (n: number): string => String(n).padStart(2, '0')
     const stamp =
       `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
       `_${pad(now.getHours())}-${pad(now.getMinutes())}`
-    const data = await window.api.connections.exportAll()
+    let data: Awaited<ReturnType<typeof window.api.connections.exportAll>>
+    try {
+      data = await window.api.connections.exportAll(passphrase)
+    } catch (err) {
+      setNotice(`Export failed: ${(err as Error).message}`)
+      return
+    }
     if (data.connections.length === 0) {
       setNotice('There are no connections to export.')
       return
@@ -323,10 +345,12 @@ export function HomePage(): JSX.Element {
     const envelope = {
       app: 'mysql-browser',
       type: 'connections',
-      version: 2,
+      version: 3,
       exportedAt: new Date().toISOString(),
       groups: data.groups,
-      connections: data.connections
+      connections: data.connections,
+      // Only present when passwords were included; older builds ignore it.
+      ...(data.secrets ? { secrets: data.secrets } : {})
     }
     const target = await window.api.dialog.saveFile(
       'Export connections',
@@ -338,11 +362,38 @@ export function HomePage(): JSX.Element {
       await window.api.files.write(target, JSON.stringify(envelope, null, 2))
       const groupNote =
         data.groups.length > 0 ? ` in ${plural(data.groups.length, 'group')}` : ''
+      const passwordNote = data.secrets
+        ? ` Passwords for ${plural(data.withSecrets, 'connection')} are included, encrypted with your passphrase.`
+        : ' Passwords were not included.'
       setNotice(
-        `Exported ${plural(data.connections.length, 'connection')}${groupNote} (without passwords).`
+        `Exported ${plural(data.connections.length, 'connection')}${groupNote}.${passwordNote}`
       )
     } catch (err) {
       setNotice(`Export failed: ${(err as Error).message}`)
+    }
+  }
+
+  /** Applies a parsed payload; a wrong passphrase writes nothing, so retrying is free. */
+  const applyImport = async (
+    payload: ImportPayload,
+    passphrase?: string
+  ): Promise<'ok' | 'bad-passphrase'> => {
+    try {
+      const result = await window.api.connections.importAll(payload, passphrase)
+      if ('badPassphrase' in result) return 'bad-passphrase'
+      setConnections(result.connections)
+      setGroups(result.groups)
+      const parts = [`${result.added} added`, `${result.updated} updated`]
+      if (result.skipped > 0) parts.push(`${result.skipped} skipped`)
+      const passwordNote =
+        result.restored > 0
+          ? ` Passwords restored for ${plural(result.restored, 'connection')}.`
+          : " Open each new connection's Edit dialog to set its password."
+      setNotice(`Imported: ${parts.join(', ')}.${passwordNote}`)
+      return 'ok'
+    } catch (err) {
+      setNotice(`Import failed: ${(err as Error).message}`)
+      return 'ok'
     }
   }
 
@@ -354,13 +405,13 @@ export function HomePage(): JSX.Element {
     if (!source) return
 
     // Exports made before groups existed are a bare array of connections.
-    let payload: { connections?: unknown; groups?: unknown } | null = null
+    let payload: ImportPayload | null = null
     try {
       const text = await window.api.files.read(source)
       const parsed = JSON.parse(text)
       if (Array.isArray(parsed)) payload = { connections: parsed }
       else if (parsed && typeof parsed === 'object')
-        payload = { connections: parsed.connections, groups: parsed.groups }
+        payload = { connections: parsed.connections, groups: parsed.groups, secrets: parsed.secrets }
     } catch {
       setNotice('That file could not be read as a connections export (invalid JSON).')
       return
@@ -370,18 +421,13 @@ export function HomePage(): JSX.Element {
       return
     }
 
-    try {
-      const result = await window.api.connections.importAll(payload)
-      setConnections(result.connections)
-      setGroups(result.groups)
-      const parts = [`${result.added} added`, `${result.updated} updated`]
-      if (result.skipped > 0) parts.push(`${result.skipped} skipped`)
-      setNotice(
-        `Imported: ${parts.join(', ')}. Open each new connection's Edit dialog to set its password.`
-      )
-    } catch (err) {
-      setNotice(`Import failed: ${(err as Error).message}`)
+    // Passwords need the passphrase they were exported under; without a secrets
+    // block there is nothing to unlock and the import goes straight through.
+    if (payload.secrets) {
+      setImportPrompt({ payload, error: null, busy: false })
+      return
     }
+    await applyImport(payload)
   }
 
   const filtering = filter.trim() !== ''
@@ -790,7 +836,7 @@ export function HomePage(): JSX.Element {
 
       <div className="home-foot">
         <ImportExportMenu
-          onExport={() => void exportConnections()}
+          onExport={() => setExportPrompt(true)}
           onImport={() => void importConnections()}
         />
       </div>
@@ -806,6 +852,42 @@ export function HomePage(): JSX.Element {
             setConnections(next)
             setCreating(false)
             setEditing(null)
+          }}
+        />
+      )}
+
+      {exportPrompt && (
+        <ExportOptionsDialog
+          connectionCount={connections.length}
+          onCancel={() => setExportPrompt(false)}
+          onExport={(passphrase) => {
+            setExportPrompt(false)
+            void writeExport(passphrase)
+          }}
+        />
+      )}
+
+      {importPrompt && (
+        <ImportPassphraseDialog
+          error={importPrompt.error}
+          busy={importPrompt.busy}
+          onCancel={() => setImportPrompt(null)}
+          onSkip={() => {
+            const { payload } = importPrompt
+            setImportPrompt(null)
+            void applyImport(payload)
+          }}
+          onSubmit={async (passphrase) => {
+            setImportPrompt((p) => (p ? { ...p, busy: true, error: null } : p))
+            const outcome = await applyImport(importPrompt.payload, passphrase)
+            if (outcome === 'bad-passphrase') {
+              // Nothing was written, so the dialog just stays up for another go.
+              setImportPrompt((p) =>
+                p ? { ...p, busy: false, error: 'That passphrase does not match this file.' } : p
+              )
+            } else {
+              setImportPrompt(null)
+            }
           }}
         />
       )}
