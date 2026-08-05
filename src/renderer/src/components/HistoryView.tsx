@@ -1,6 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { HistoryColumnWidths, HistoryEntry } from '@shared/types'
-import { DEFAULT_HISTORY_COLUMNS } from '@shared/types'
 import { useContextMenu } from './ui/ContextMenu'
 
 /** Status icon gutter — not resizable, it only ever holds a ✓ or a !. */
@@ -35,7 +34,7 @@ function formatDuration(ms: number | null): string {
 
 interface Props {
   entries: HistoryEntry[]
-  widths: HistoryColumnWidths | undefined
+  widths: HistoryColumnWidths
   onResize(widths: HistoryColumnWidths): void
   /** Fired once when a drag ends, so the new widths are persisted just once. */
   onResizeCommit(): void
@@ -55,13 +54,8 @@ export function HistoryView({
   const atBottomRef = useRef(true)
   const resizeRef = useRef<{ col: ResizableColumn; startX: number; startWidth: number } | null>(null)
 
-  // Sessions saved before the columns were resizable have no widths stored.
-  const size = useMemo<HistoryColumnWidths>(
-    () => ({ ...DEFAULT_HISTORY_COLUMNS, ...(widths ?? {}) }),
-    [widths]
-  )
-  const sizeRef = useRef(size)
-  sizeRef.current = size
+  const sizeRef = useRef(widths)
+  sizeRef.current = widths
 
   const onResizeRef = useRef(onResize)
   onResizeRef.current = onResize
@@ -112,7 +106,7 @@ export function HistoryView({
 
   const startResize = (col: ResizableColumn) => (e: React.PointerEvent) => {
     e.preventDefault()
-    resizeRef.current = { col, startX: e.clientX, startWidth: size[col] }
+    resizeRef.current = { col, startX: e.clientX, startWidth: widths[col] }
     document.body.classList.add('resizing-col')
   }
 
@@ -124,18 +118,18 @@ export function HistoryView({
   )
 
   const totalWidth =
-    GUTTER_WIDTH + size.seq + size.time + size.action + size.message + size.duration
+    GUTTER_WIDTH + widths.seq + widths.time + widths.action + widths.message + widths.duration
 
   return (
     <div className="grid-wrap" ref={scrollRef} onScroll={onScroll}>
       <table className="history-table" style={{ width: totalWidth, minWidth: '100%' }}>
         <colgroup>
           <col style={{ width: GUTTER_WIDTH }} />
-          <col style={{ width: size.seq }} />
-          <col style={{ width: size.time }} />
-          <col style={{ width: size.action }} />
-          <col style={{ width: size.message }} />
-          <col style={{ width: size.duration }} />
+          <col style={{ width: widths.seq }} />
+          <col style={{ width: widths.time }} />
+          <col style={{ width: widths.action }} />
+          <col style={{ width: widths.message }} />
+          <col style={{ width: widths.duration }} />
           {/* Soaks up any width left over when the pane is wider than the columns. */}
           <col />
         </colgroup>

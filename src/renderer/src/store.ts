@@ -228,11 +228,13 @@ export const useAppStore = create<AppState>((set, get) => {
           ])
           patchConn(sessionId, (t) => ({
             ...t,
-            schemas: meta.schemas ?? [],
-            schemasFetchedAt: meta.schemasFetchedAt ?? 0,
-            expanded: Object.fromEntries((meta.expandedSchemas ?? []).map((k) => [k, true])),
+            schemas: meta.schemas,
+            schemasFetchedAt: meta.schemasFetchedAt,
+            expanded: Object.fromEntries(meta.expandedSchemas.map((k) => [k, true])),
+            // A stored null means "nothing chosen", which falls back to the
+            // connection's default schema rather than to no schema at all.
             activeSchema: meta.activeSchema ?? t.activeSchema,
-            layout: { ...DEFAULT_LAYOUT, ...(meta.layout ?? {}) },
+            layout: meta.layout,
             tabs,
             activeTabId:
               meta.activeTabId && tabs.some((x) => x.id === meta.activeTabId)

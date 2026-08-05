@@ -14,6 +14,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { app, safeStorage } from 'electron'
 import {
+  DEFAULT_HISTORY_COLUMNS,
   DEFAULT_LAYOUT,
   DEFAULT_PREFERENCES,
   toEngine,
@@ -42,6 +43,7 @@ export async function initStore(): Promise<void> {
   rootDir = app.getPath('userData')
   fs.mkdirSync(path.join(rootDir, 'sessions'), { recursive: true })
   await migrateConnectionEngines()
+  await migrateSessionMeta()
 }
 
 /**
@@ -57,6 +59,31 @@ async function migrateConnectionEngines(): Promise<void> {
   for (const connection of stale) connection.engine = 'mysql'
   await writeJson(file('connections.json'), stored)
   console.log(`Migrated ${stale.length} connection(s) to an explicit engine.`)
+}
+
+/**
+ * Session files written before the layout and the resizable history columns
+ * existed are missing fields that `SessionMeta` now declares. Completing them
+ * once, at startup, is what lets readers take the shape as given.
+ */
+async function migrateSessionMeta(): Promise<void> {
+  const root = file('sessions')
+  const entries = await fsp.readdir(root, { withFileTypes: true }).catch(() => [])
+  let migrated = 0
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const metaFile = path.join(root, entry.name, 'meta.json')
+    const stored = await readJson<Partial<SessionMeta> | null>(metaFile, null)
+    if (!stored) continue
+
+    const complete = completeSessionMeta(stored, stored.connectionId ?? entry.name)
+    if (JSON.stringify(complete) === JSON.stringify(stored)) continue
+    await writeJson(metaFile, complete)
+    migrated++
+  }
+
+  if (migrated > 0) console.log(`Migrated ${migrated} session file(s) to the current shape.`)
 }
 
 function file(...parts: string[]): string {
@@ -140,8 +167,11 @@ interface ScryptParams {
 const SCRYPT: ScryptParams = { N: 32768, r: 8, p: 1, keyLength: 32 }
 const SCRYPT_MAXMEM = 96 * 1024 * 1024
 
-/** Thrown when the passphrase cannot open an export's secrets envelope. */
-export class PassphraseError extends Error {
+/**
+ * Thrown when the passphrase cannot open an export's secrets envelope. Never
+ * leaves this module — `importConnections` turns it into a returned outcome.
+ */
+class PassphraseError extends Error {
   readonly code = 'BAD_PASSPHRASE'
   constructor(message: string) {
     super(message)
@@ -516,8 +546,9 @@ function sessionDir(connectionId: string): string {
   return file('sessions', safeId(connectionId))
 }
 
-export async function getSessionMeta(connectionId: string): Promise<SessionMeta> {
-  return readJson<SessionMeta>(path.join(sessionDir(connectionId), 'meta.json'), {
+/** What a connection's session looks like before it has ever been opened. */
+function blankSessionMeta(connectionId: string): SessionMeta {
+  return {
     connectionId,
     tabIds: [],
     activeTabId: null,
@@ -525,8 +556,30 @@ export async function getSessionMeta(connectionId: string): Promise<SessionMeta>
     activeSchema: null,
     schemas: [],
     schemasFetchedAt: 0,
-    layout: { ...DEFAULT_LAYOUT }
-  })
+    layout: { ...DEFAULT_LAYOUT, historyColumns: { ...DEFAULT_HISTORY_COLUMNS } }
+  }
+}
+
+/** Fills in whatever a stored session file is missing, nested layout included. */
+function completeSessionMeta(stored: Partial<SessionMeta>, connectionId: string): SessionMeta {
+  const blank = blankSessionMeta(connectionId)
+  return {
+    ...blank,
+    ...stored,
+    connectionId,
+    layout: {
+      ...blank.layout,
+      ...(stored.layout ?? {}),
+      historyColumns: { ...blank.layout.historyColumns, ...(stored.layout?.historyColumns ?? {}) }
+    }
+  }
+}
+
+export async function getSessionMeta(connectionId: string): Promise<SessionMeta> {
+  return readJson<SessionMeta>(
+    path.join(sessionDir(connectionId), 'meta.json'),
+    blankSessionMeta(connectionId)
+  )
 }
 
 export async function setSessionMeta(meta: SessionMeta): Promise<void> {
