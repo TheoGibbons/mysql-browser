@@ -349,7 +349,7 @@ export function HomePage(): JSX.Element {
       exportedAt: new Date().toISOString(),
       groups: data.groups,
       connections: data.connections,
-      // Only present when passwords were included; older builds ignore it.
+      // Present only when passwords were included.
       ...(data.secrets ? { secrets: data.secrets } : {})
     }
     const target = await window.api.dialog.saveFile(
@@ -404,13 +404,11 @@ export function HomePage(): JSX.Element {
     ])
     if (!source) return
 
-    // Exports made before groups existed are a bare array of connections.
     let payload: ImportPayload | null = null
     try {
       const text = await window.api.files.read(source)
       const parsed = JSON.parse(text)
-      if (Array.isArray(parsed)) payload = { connections: parsed }
-      else if (parsed && typeof parsed === 'object')
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
         payload = { connections: parsed.connections, groups: parsed.groups, secrets: parsed.secrets }
     } catch {
       setNotice('That file could not be read as a connections export (invalid JSON).')

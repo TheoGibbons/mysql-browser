@@ -371,19 +371,19 @@ export interface ImportRejected {
 
 /**
  * Merges imported connections by id. Existing secrets are preserved when the
- * imported entry has none (the export strips them), so re-importing never wipes
- * a saved password. Unknown/invalid entries are skipped.
+ * imported entry has none (an export without a passphrase carries none), so
+ * re-importing never wipes a saved password. Unknown/invalid entries are
+ * skipped.
  *
- * Accepts either the current `{ connections, groups }` payload or a bare array
- * of connections (what exports before groups existed contained). A `secrets`
- * envelope is opened with `passphrase` before anything is written, so a wrong
- * passphrase leaves the stored connections untouched and can just be retried.
+ * A `secrets` envelope is opened with `passphrase` before anything is written,
+ * so a wrong passphrase leaves the stored connections untouched and can just be
+ * retried.
  */
 export async function importConnections(
   incoming: unknown,
   passphrase?: string
 ): Promise<ImportResult | ImportRejected> {
-  const payload = (Array.isArray(incoming) ? { connections: incoming } : incoming ?? {}) as {
+  const payload = (incoming ?? {}) as {
     connections?: unknown
     groups?: unknown
     secrets?: unknown
@@ -449,19 +449,15 @@ export async function importConnections(
       ? merged.groupId
       : null
 
-    // Secrets, most trustworthy source first: the envelope this import just
-    // decrypted, then a plaintext secret inlined by some older/hand-made file,
-    // then whatever the existing connection already had.
+    // Secrets only ever come from the envelope this import just decrypted;
+    // otherwise keep whatever the existing connection already had.
     const sealed = unsealed[id] ?? {}
     let restoredHere = false
     for (const key of SECRET_FIELDS) {
       const fromEnvelope = sealed[key]
-      const imported = (cfg as Record<string, unknown>)[key]
       if (typeof fromEnvelope === 'string' && fromEnvelope !== '') {
         merged[key] = fromEnvelope
         restoredHere = true
-      } else if (typeof imported === 'string' && imported !== '' && !imported.startsWith(ENC_PREFIX)) {
-        merged[key] = imported
       } else if (existing) {
         merged[key] = existing[key]
       } else {
