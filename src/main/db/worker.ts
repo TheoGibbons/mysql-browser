@@ -21,7 +21,6 @@ import type {
   SchemaInfo,
   TableDefinition
 } from '@shared/types'
-import { engineOf } from '@shared/types'
 import type { WorkerEvent, WorkerInit, WorkerRequest, WorkerResponse } from '@shared/worker-protocol'
 import { splitStatements, isReadOnlyStatement } from '@shared/sql'
 import { openTunnel, type Tunnel } from './tunnel'
@@ -36,7 +35,7 @@ if (!port) throw new Error('db worker must be started as a worker thread')
 const init = workerData as WorkerInit
 const config: ConnectionConfig = init.config
 let prefs: Preferences = init.prefs
-const engine = engineOf(config)
+const engine = config.engine
 
 /** Hard cap so a runaway `SELECT *` cannot exhaust memory. */
 const MAX_ROWS = 500_000

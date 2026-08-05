@@ -76,8 +76,8 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
-  void app.whenReady().then(() => {
-    initStore()
+  void app.whenReady().then(async () => {
+    await initStore()
     registerIpc()
     const win = createWindow()
     win.setMenuBarVisibility(false)

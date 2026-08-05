@@ -16,7 +16,7 @@ import { app, safeStorage } from 'electron'
 import {
   DEFAULT_LAYOUT,
   DEFAULT_PREFERENCES,
-  engineOf,
+  toEngine,
   type ConnectionConfig,
   type ConnectionGroup,
   type ConnectionSecretsEnvelope,
@@ -38,9 +38,25 @@ type SecretField = (typeof SECRET_FIELDS)[number]
 
 let rootDir = ''
 
-export function initStore(): void {
+export async function initStore(): Promise<void> {
   rootDir = app.getPath('userData')
   fs.mkdirSync(path.join(rootDir, 'sessions'), { recursive: true })
+  await migrateConnectionEngines()
+}
+
+/**
+ * Connections saved before PostgreSQL support have no `engine`. Filling it in
+ * once, before anything else reads the file, is what lets every other path take
+ * the field as given rather than defaulting it on each read. Entries are
+ * rewritten as stored, so their encrypted secrets are untouched.
+ */
+async function migrateConnectionEngines(): Promise<void> {
+  const stored = await readJson<ConnectionConfig[]>(file('connections.json'), [])
+  const stale = stored.filter((c) => c.engine !== 'mysql' && c.engine !== 'postgres')
+  if (stale.length === 0) return
+  for (const connection of stale) connection.engine = 'mysql'
+  await writeJson(file('connections.json'), stored)
+  console.log(`Migrated ${stale.length} connection(s) to an explicit engine.`)
 }
 
 function file(...parts: string[]): string {
@@ -103,7 +119,7 @@ function protect(config: ConnectionConfig): ConnectionConfig {
 }
 
 function unprotect(config: ConnectionConfig): ConnectionConfig {
-  const out = { ...config, engine: engineOf(config) }
+  const out = { ...config }
   for (const key of SECRET_FIELDS) {
     const value = out[key]
     if (value) out[key] = decrypt(value)
@@ -439,7 +455,7 @@ export async function importConnections(
       ...(cleaned as Partial<ConnectionConfig>),
       id,
       name: cfg.name.trim(),
-      engine: engineOf(cleaned as Partial<ConnectionConfig>),
+      engine: toEngine(cleaned.engine),
       createdAt: existing?.createdAt ?? (typeof cfg.createdAt === 'number' ? cfg.createdAt : Date.now())
     } as ConnectionConfig
 

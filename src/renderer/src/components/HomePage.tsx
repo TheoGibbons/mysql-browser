@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ConnectionConfig, ConnectionGroup } from '@shared/types'
-import { engineOf } from '@shared/types'
 import { useAppStore } from '../store'
 import { useContextMenu } from './ui/ContextMenu'
 import { ExportIcon, ImportIcon, NewGroupIcon, PlusIcon, SearchIcon } from './ui/Icons'
@@ -25,7 +24,7 @@ function endpoint(config: ConnectionConfig): string {
       : `${config.host}:${config.port}`
   // A Postgres connection is pinned to one database, so which one is part of
   // identifying the connection in a way a MySQL host:port is not.
-  const database = engineOf(config) === 'postgres' ? config.database?.trim() : ''
+  const database = config.engine === 'postgres' ? config.database?.trim() : ''
   return database ? `${server}/${database}` : server
 }
 
@@ -34,7 +33,7 @@ function methodBadge(config: ConnectionConfig): string | null {
     config.method === 'ssh' ? 'SSH' : config.method === 'iam' ? 'AWS IAM' : null
   // Existing MySQL cards keep the badge they have always had; only Postgres
   // needs calling out, because it is the new thing on the screen.
-  if (engineOf(config) !== 'postgres') return method
+  if (config.engine !== 'postgres') return method
   return method ? `PG · ${method}` : 'PG'
 }
 

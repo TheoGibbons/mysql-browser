@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ConnectionConfig, ConnectionMethod, DbEngine } from '@shared/types'
-import { DEFAULT_PORTS, engineOf } from '@shared/types'
+import { DEFAULT_PORTS } from '@shared/types'
 import { Modal } from './ui/Modal'
 import { ColorField } from './ui/ColorField'
 import { newId } from '../lib/ids'
@@ -78,7 +78,7 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
     []
   )
 
-  const engine = engineOf(config)
+  const engine = config.engine
   const isPostgres = engine === 'postgres'
   const serverName = isPostgres ? 'PostgreSQL' : 'MySQL'
 
@@ -93,7 +93,7 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
    * unless they have been changed from the default already.
    */
   const switchEngine = (next: DbEngine): void => {
-    const previous = engineOf(config)
+    const previous = config.engine
     if (next === previous) return
     patch({
       engine: next,

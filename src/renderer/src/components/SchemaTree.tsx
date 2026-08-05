@@ -13,7 +13,6 @@ import {
   ViewIcon
 } from './ui/Icons'
 import { dialectFor, qualify } from '@shared/dialect'
-import { engineOf } from '@shared/types'
 import * as T from '../lib/sqlTemplates'
 import { designerFromDefinition, emptyDesigner } from '../lib/designer'
 
@@ -62,7 +61,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
   const setActiveSchema = useAppStore((s) => s.setActiveSchema)
   const runQuery = useAppStore((s) => s.runQuery)
 
-  const engine = engineOf(conn.config)
+  const engine = conn.config.engine
   const d = dialectFor(engine)
 
   const menu = useContextMenu()

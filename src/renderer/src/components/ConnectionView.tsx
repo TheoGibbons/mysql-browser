@@ -3,7 +3,6 @@ import { format as formatSql } from 'sql-formatter'
 import type { DesignerState, QueryTabState } from '@shared/types'
 import { hasModifyingStatement, statementAt } from '@shared/sql'
 import { dialectFor } from '@shared/dialect'
-import { engineOf } from '@shared/types'
 import { gridKey, useAppStore, useGridStore, type ConnTab, type NewTabOptions } from '../store'
 import { buildApplyPlan, isDirty, toCsv, toJson, toSqlInserts, toTsv, visibleRefs } from '../lib/grid'
 import { isValidHex, tint } from '../lib/color'
@@ -38,7 +37,7 @@ interface Props {
 export function ConnectionView({ conn }: Props): JSX.Element {
   const { sessionId, tabs, activeTabId, running, layout, status } = conn
 
-  const engine = engineOf(conn.config)
+  const engine = conn.config.engine
   const d = dialectFor(engine)
 
   const prefs = useAppStore((s) => s.prefs)
@@ -492,7 +491,7 @@ function TabContent({
   onLayoutCommit
 }: TabContentProps): JSX.Element {
   const prefs = useAppStore((s) => s.prefs)
-  const engine = engineOf(conn.config)
+  const engine = conn.config.engine
   const d = dialectFor(engine)
 
   if (tab.kind === 'export' || tab.kind === 'import') {

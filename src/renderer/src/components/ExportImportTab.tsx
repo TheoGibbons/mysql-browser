@@ -1,5 +1,4 @@
 import type { ConnectionConfig, Preferences } from '@shared/types'
-import { engineOf } from '@shared/types'
 import { ExportIcon, ImportIcon } from './ui/Icons'
 
 interface Props {
@@ -15,7 +14,7 @@ interface Props {
  */
 export function ExportImportTab({ kind, config, prefs }: Props): JSX.Element {
   const isExport = kind === 'export'
-  const isPostgres = engineOf(config) === 'postgres'
+  const isPostgres = config.engine === 'postgres'
   // Preferences only holds the MySQL tool paths so far; a Postgres connection
   // has nowhere to read one from yet, and must not show the MySQL one as if it
   // were going to be used.

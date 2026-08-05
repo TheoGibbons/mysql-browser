@@ -20,8 +20,7 @@ export interface ConnectionConfig {
   id: string
   name: string
   method: ConnectionMethod
-  /** Absent in connections saved before Postgres support; read it via `engineOf`. */
-  engine?: DbEngine
+  engine: DbEngine
 
   /** Database server host. For `ssh` this is resolved from the SSH server's point of view. */
   host: string
@@ -75,9 +74,13 @@ export interface ConnectionConfig {
   createdAt: number
 }
 
-/** Connections saved before Postgres support have no `engine` and are MySQL. */
-export function engineOf(config: Pick<ConnectionConfig, 'engine'> | null | undefined): DbEngine {
-  return config?.engine === 'postgres' ? 'postgres' : 'mysql'
+/**
+ * Narrows an unvalidated value — a field from an imported JSON file — to an
+ * engine. Stored connections always carry a valid one, so this belongs at the
+ * import boundary and nowhere else.
+ */
+export function toEngine(value: unknown): DbEngine {
+  return value === 'postgres' ? 'postgres' : 'mysql'
 }
 
 /**
