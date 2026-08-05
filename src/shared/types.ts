@@ -2,17 +2,35 @@
 
 export type ConnectionMethod = 'tcp' | 'ssh' | 'iam'
 
+/** Which server a connection talks to. */
+export type DbEngine = 'mysql' | 'postgres'
+
+export const DEFAULT_PORTS: Record<DbEngine, number> = {
+  mysql: 3306,
+  postgres: 5432
+}
+
+/**
+ * MySQL treats a database and a schema as the same thing, so one flat level of
+ * "schemas" holds every table. Postgres nests schemas inside a database and a
+ * connection can only see one database at a time, so `database` selects which
+ * one and the tree then lists that database's schemas.
+ */
 export interface ConnectionConfig {
   id: string
   name: string
   method: ConnectionMethod
+  /** Absent in connections saved before Postgres support; read it via `engineOf`. */
+  engine?: DbEngine
 
-  /** MySQL server host. For `ssh` this is resolved from the SSH server's point of view. */
+  /** Database server host. For `ssh` this is resolved from the SSH server's point of view. */
   host: string
   port: number
   user: string
   /** Not used by `iam`, which generates a token instead. */
   password?: string
+  /** Postgres only — the database to connect to. MySQL gets this from `defaultSchema`. */
+  database?: string
   defaultSchema?: string
 
   // --- Standard TCP/IP over SSH ---
@@ -55,6 +73,11 @@ export interface ConnectionConfig {
   groupId?: string | null
 
   createdAt: number
+}
+
+/** Connections saved before Postgres support have no `engine` and are MySQL. */
+export function engineOf(config: Pick<ConnectionConfig, 'engine'> | null | undefined): DbEngine {
+  return config?.engine === 'postgres' ? 'postgres' : 'mysql'
 }
 
 /**
@@ -133,6 +156,13 @@ export interface IndexInfo {
   storageType: string
   comment: string
   visible: boolean
+  /**
+   * True when the index only exists to enforce a constraint. Postgres refuses
+   * to `DROP INDEX` one of these — it has to go through `DROP CONSTRAINT` —
+   * and creates it as a table constraint rather than a `CREATE INDEX`.
+   * Always false on MySQL, where an index is an index.
+   */
+  isConstraint: boolean
   columns: { column: string; seq: number; order: 'ASC' | 'DESC'; length: number | null }[]
 }
 
@@ -168,7 +198,7 @@ export interface ColumnMeta {
   /** Original table, empty for computed columns. */
   orgTable: string
   schema: string
-  /** mysql2 numeric type id. */
+  /** Engine-specific type id: a MySQL protocol type, or a Postgres type OID. */
   type: number
   typeName: string
   isPrimaryKey: boolean
@@ -235,6 +265,8 @@ export interface DesignerIndex {
   keyBlockSize: string
   parser: string
   visible: boolean
+  /** See `IndexInfo.isConstraint`. */
+  isConstraint: boolean
   comment: string
   columns: { column: string; seq: number; order: 'ASC' | 'DESC'; length: string }[]
 }
@@ -358,7 +390,7 @@ export interface IpcError {
   message: string
   code?: string
   sqlState?: string
-  /** MySQL error number, when the failure came from the server. */
+  /** MySQL error number, when the failure came from a MySQL server. */
   errno?: number
 }
 

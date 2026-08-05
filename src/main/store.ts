@@ -15,6 +15,7 @@ import { app, safeStorage } from 'electron'
 import {
   DEFAULT_LAYOUT,
   DEFAULT_PREFERENCES,
+  engineOf,
   type ConnectionConfig,
   type ConnectionGroup,
   type Preferences,
@@ -93,7 +94,7 @@ function protect(config: ConnectionConfig): ConnectionConfig {
 }
 
 function unprotect(config: ConnectionConfig): ConnectionConfig {
-  const out = { ...config }
+  const out = { ...config, engine: engineOf(config) }
   for (const key of SECRET_FIELDS) {
     const value = out[key]
     if (value) out[key] = decrypt(value)
@@ -277,6 +278,7 @@ export async function importConnections(incoming: unknown): Promise<ImportResult
       ...(cleaned as Partial<ConnectionConfig>),
       id,
       name: cfg.name.trim(),
+      engine: engineOf(cleaned as Partial<ConnectionConfig>),
       createdAt: existing?.createdAt ?? (typeof cfg.createdAt === 'number' ? cfg.createdAt : Date.now())
     } as ConnectionConfig
 

@@ -1,4 +1,5 @@
 import type { ConnectionConfig, Preferences } from '@shared/types'
+import { engineOf } from '@shared/types'
 import { ExportIcon, ImportIcon } from './ui/Icons'
 
 interface Props {
@@ -8,14 +9,24 @@ interface Props {
 }
 
 /**
- * Placeholder for the mysqldump-backed Data Export / Data Import features.
+ * Placeholder for the dump-tool-backed Data Export / Data Import features.
  * The tab exists, is restored with the session, and shows the configuration it
  * will use once the feature lands.
  */
 export function ExportImportTab({ kind, config, prefs }: Props): JSX.Element {
   const isExport = kind === 'export'
-  const toolPath = isExport ? prefs.mysqldumpPath : prefs.mysqlPath
-  const toolName = isExport ? 'mysqldump' : 'mysql'
+  const isPostgres = engineOf(config) === 'postgres'
+  // Preferences only holds the MySQL tool paths so far; a Postgres connection
+  // has nowhere to read one from yet, and must not show the MySQL one as if it
+  // were going to be used.
+  const toolPath = isPostgres ? '' : isExport ? prefs.mysqldumpPath : prefs.mysqlPath
+  const toolName = isPostgres
+    ? isExport
+      ? 'pg_dump'
+      : 'psql'
+    : isExport
+      ? 'mysqldump'
+      : 'mysql'
 
   return (
     <div className="placeholder-tab">
@@ -50,7 +61,13 @@ export function ExportImportTab({ kind, config, prefs }: Props): JSX.Element {
           </div>
           <div>
             <strong>Path to {toolName}:</strong>{' '}
-            {toolPath || <em style={{ color: 'var(--warn)' }}>not set — configure in Preferences</em>}
+            {toolPath || (
+              <em style={{ color: 'var(--warn)' }}>
+                {isPostgres
+                  ? 'no setting for this yet — it arrives with the feature'
+                  : 'not set — configure in Preferences'}
+              </em>
+            )}
           </div>
           <div>
             <strong>Export directory:</strong>{' '}

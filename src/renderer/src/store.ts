@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   DEFAULT_LAYOUT,
   DEFAULT_PREFERENCES,
+  engineOf,
   type ConnectionConfig,
   type ConnectionGroup,
   type HistoryEntry,
@@ -508,7 +509,7 @@ export const useAppStore = create<AppState>((set, get) => {
         }
       }
 
-      const statements = splitStatements(trimmed)
+      const statements = splitStatements(trimmed, engineOf(tab.config))
       const toRun = options.explain
         ? statements.map((s) => `EXPLAIN ${s.text}`).join(';\n') + ';'
         : trimmed

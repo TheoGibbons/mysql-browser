@@ -39,8 +39,10 @@ const api = {
     list: () => call<ConnectionConfig[]>('connections:list'),
     save: (config: ConnectionConfig) => call<ConnectionConfig[]>('connections:save', config),
     remove: (id: string) => call<ConnectionConfig[]>('connections:delete', id),
-    test: (config: ConnectionConfig) =>
-      call<{ serverVersion: string; latencyMs: number }>('connections:test', config),
+    /** `testId` is a caller-made token that `testCancel` can stop the test with. */
+    test: (config: ConnectionConfig, testId: string) =>
+      call<{ serverVersion: string; latencyMs: number }>('connections:test', config, testId),
+    testCancel: (testId: string) => call<boolean>('connections:testCancel', testId),
     /** The complete display order, each entry with the group it now sits in. */
     arrange: (placements: { id: string; groupId: string | null }[]) =>
       call<ConnectionConfig[]>('connections:arrange', placements),

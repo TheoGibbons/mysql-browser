@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state'
+import { Compartment, EditorState, Facet, RangeSetBuilder } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
@@ -23,7 +23,7 @@ import {
   startCompletion
 } from '@codemirror/autocomplete'
 import type { Completion, CompletionResult, CompletionSource } from '@codemirror/autocomplete'
-import { MySQL, sql } from '@codemirror/lang-sql'
+import { MySQL, PostgreSQL, sql } from '@codemirror/lang-sql'
 import {
   HighlightStyle,
   bracketMatching,
@@ -32,6 +32,16 @@ import {
 } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { referencedTables, statementAt } from '@shared/sql'
+import type { DbEngine } from '@shared/types'
+
+/**
+ * The connection's engine, carried in editor state so the statement-splitting
+ * helpers below — which decide what actually gets executed — agree with the
+ * server the text is headed for.
+ */
+const sqlEngine = Facet.define<DbEngine, DbEngine>({
+  combine: (values) => values[0] ?? 'mysql'
+})
 
 export interface EditorApi {
   getSql(): string
@@ -59,6 +69,8 @@ interface Props {
   readOnly?: boolean
   /** Background tint for the editor, from the connection's colour. */
   background?: string
+  /** Picks the grammar, the keyword set and the statement splitter. */
+  engine: DbEngine
 }
 
 interface CompletionContextData {
@@ -94,10 +106,14 @@ function fromClauseCompletions(
 
     // Qualified and quoted paths are lang-sql's job.
     const prev = context.state.sliceDoc(Math.max(0, word.from - 1), word.from)
-    if (prev === '.' || prev === '`') return null
+    if (prev === '.' || prev === '`' || prev === '"') return null
 
     const { schema, defaultSchema, onNeedSchemaColumns } = dataRef.current
-    const statement = statementAt(context.state.doc.toString(), context.pos)
+    const statement = statementAt(
+      context.state.doc.toString(),
+      context.pos,
+      context.state.facet(sqlEngine)
+    )
     if (!statement) return null
 
     const options: Completion[] = []
@@ -176,7 +192,11 @@ const currentStatementHighlight = ViewPlugin.fromClass(
     build(view: EditorView): DecorationSet {
       const builder = new RangeSetBuilder<Decoration>()
       const doc = view.state.doc
-      const statement = statementAt(doc.toString(), view.state.selection.main.head)
+      const statement = statementAt(
+        doc.toString(),
+        view.state.selection.main.head,
+        view.state.facet(sqlEngine)
+      )
       if (!statement) return builder.finish()
 
       const fromLine = doc.lineAt(Math.min(statement.start, doc.length)).number
@@ -205,8 +225,10 @@ export function QueryEditor({
   defaultSchema,
   onNeedSchemaColumns,
   readOnly = false,
-  background
+  background,
+  engine
 }: Props): JSX.Element {
+  const sqlDialect = engine === 'postgres' ? PostgreSQL : MySQL
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const debounceRef = useRef<number | null>(null)
@@ -228,12 +250,12 @@ export function QueryEditor({
   const languageExtension = useMemo(
     () =>
       sql({
-        dialect: MySQL,
+        dialect: sqlDialect,
         schema: completionSchema,
         defaultSchema: defaultSchema ?? undefined,
         upperCaseKeywords: true
       }),
-    [completionSchema, defaultSchema]
+    [completionSchema, defaultSchema, sqlDialect]
   )
 
   // One editor instance per tab; `tabId` in the dependency list remounts it.
@@ -265,7 +287,8 @@ export function QueryEditor({
           closeBrackets(),
           highlightSelectionMatches(),
           autocompletion({ activateOnTyping: true, maxRenderedOptions: 40 }),
-          MySQL.language.data.of({ autocomplete: fromClauseCompletions(completionData) }),
+          sqlEngine.of(engine),
+          sqlDialect.language.data.of({ autocomplete: fromClauseCompletions(completionData) }),
           syntaxHighlighting(highlightStyle),
           currentStatementHighlight,
           langCompartment.current.of(languageExtension),
@@ -329,7 +352,10 @@ export function QueryEditor({
       },
       getStatementAtCursor: () => {
         const text = view.state.doc.toString()
-        return statementAt(text, view.state.selection.main.head)?.text ?? null
+        return (
+          statementAt(text, view.state.selection.main.head, view.state.facet(sqlEngine))?.text ??
+          null
+        )
       },
       setSql: (next: string) => {
         view.dispatch({

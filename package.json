@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "mysql2": "^3.11.5",
+    "pg": "^8.22.0",
     "ssh2": "^1.16.0"
   },
   "devDependencies": {
@@ -27,6 +28,7 @@
     "@codemirror/view": "^6.36.1",
     "@lezer/highlight": "^1.2.3",
     "@types/node": "^22.10.2",
+    "@types/pg": "^8.20.4",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@types/ssh2": "^1.15.1",

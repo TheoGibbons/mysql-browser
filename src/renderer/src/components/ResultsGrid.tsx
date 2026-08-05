@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CellValue, ResultSet } from '@shared/types'
-import { displayValue, quoteIdent } from '@shared/sql'
+import { displayValue } from '@shared/sql'
+import type { Dialect } from '@shared/dialect'
 import {
   addedIndex,
   applySelection,
@@ -34,6 +35,8 @@ interface Props {
   update(fn: (state: GridState) => GridState): void
   /** Null when the grid is read-only (no single source table / no key). */
   editable: boolean
+  /** Quoting and escaping rules for the connection these rows came from. */
+  dialect: Dialect
 }
 
 /** Sizes columns from the widest of the header and the first rows of data. */
@@ -55,7 +58,14 @@ function defaultWidths(result: ResultSet): Record<number, number> {
   return widths
 }
 
-export function ResultsGrid({ result, state, patch, update, editable }: Props): JSX.Element {
+export function ResultsGrid({
+  result,
+  state,
+  patch,
+  update,
+  editable,
+  dialect: d
+}: Props): JSX.Element {
   const menu = useContextMenu()
   const scrollRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
@@ -211,7 +221,7 @@ export function ResultsGrid({ result, state, patch, update, editable }: Props): 
     { separator: true },
     {
       label: 'Copy all column names (quoted)',
-      onSelect: () => copy(result.columns.map((c) => quoteIdent(c.name)).join(', '))
+      onSelect: () => copy(result.columns.map((c) => d.quoteIdent(c.name)).join(', '))
     },
     { separator: true },
     {
@@ -242,21 +252,21 @@ export function ResultsGrid({ result, state, patch, update, editable }: Props): 
       {
         label: 'Copy to Clipboard',
         submenu: [
-          { label: 'Copy Row Values', onSelect: () => copy(rowsToValuesText(result, state, ordered)) },
+          { label: 'Copy Row Values', onSelect: () => copy(rowsToValuesText(d, result, state, ordered)) },
           {
             label: 'Copy Row With Names',
-            onSelect: () => copy(rowsWithNamesText(result, state, ordered))
+            onSelect: () => copy(rowsWithNamesText(d, result, state, ordered))
           },
           { separator: true },
           {
             label: 'Copy Insert Into Statement',
-            onSelect: () => copy(rowsToInsert(result, state, ordered))
+            onSelect: () => copy(rowsToInsert(d, result, state, ordered))
           },
           {
             label: 'Copy Insert Set Statement',
-            onSelect: () => copy(rowsToInsertSet(result, state, ordered))
+            onSelect: () => copy(rowsToInsertSet(d, result, state, ordered))
           },
-          { label: 'Copy Update Statement', onSelect: () => copy(rowsToUpdate(result, state, ordered)) },
+          { label: 'Copy Update Statement', onSelect: () => copy(rowsToUpdate(d, result, state, ordered)) },
           { separator: true },
           {
             label: 'Copy Field Value',
@@ -309,6 +319,9 @@ export function ResultsGrid({ result, state, patch, update, editable }: Props): 
           {result.columns.map((_c, index) => (
             <col key={index} style={{ width: widths[index] ?? 120 }} />
           ))}
+          {/* Soaks up any width left over when the pane is wider than the columns,
+              so the fixed layout doesn't stretch the gutter and data columns. */}
+          <col />
         </colgroup>
 
         <thead>
@@ -347,13 +360,14 @@ export function ResultsGrid({ result, state, patch, update, editable }: Props): 
                 />
               </th>
             ))}
+            <th className="filler" />
           </tr>
         </thead>
 
         <tbody>
           {topPad > 0 && (
             <tr style={{ height: topPad }}>
-              <td className="gutter" colSpan={result.columns.length + 1} />
+              <td className="gutter" colSpan={result.columns.length + 2} />
             </tr>
           )}
 
@@ -440,13 +454,14 @@ export function ResultsGrid({ result, state, patch, update, editable }: Props): 
                     </td>
                   )
                 })}
+                <td className="filler" />
               </tr>
             )
           })}
 
           {bottomPad > 0 && (
             <tr style={{ height: bottomPad }}>
-              <td className="gutter" colSpan={result.columns.length + 1} />
+              <td className="gutter" colSpan={result.columns.length + 2} />
             </tr>
           )}
         </tbody>

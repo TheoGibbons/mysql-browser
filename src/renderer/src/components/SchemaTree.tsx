@@ -12,9 +12,10 @@ import {
   TableIcon,
   ViewIcon
 } from './ui/Icons'
-import { qualify, quoteIdent } from '@shared/sql'
+import { dialectFor, qualify } from '@shared/dialect'
+import { engineOf } from '@shared/types'
 import * as T from '../lib/sqlTemplates'
-import { designerFromDefinition, emptyDesigner } from '../lib/designerSql'
+import { designerFromDefinition, emptyDesigner } from '../lib/designer'
 
 const ROW_HEIGHT = 19
 /** Extra rows rendered above and below the viewport to keep scrolling smooth. */
@@ -60,6 +61,9 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
   const setSelectedNode = useAppStore((s) => s.setSelectedNode)
   const setActiveSchema = useAppStore((s) => s.setActiveSchema)
   const runQuery = useAppStore((s) => s.runQuery)
+
+  const engine = engineOf(conn.config)
+  const d = dialectFor(engine)
 
   const menu = useContextMenu()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -163,7 +167,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
         openTab({
           title: `${table} — Alter`,
           kind: 'designer',
-          designer: designerFromDefinition(definition)
+          designer: designerFromDefinition(definition, engine)
         })
       } catch (err) {
         useAppStore.getState().pushHistory(sessionId, {
@@ -182,18 +186,23 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
   const selectRows = useCallback(
     (schema: string, table: string) => {
       // Read-only, so it may run straight away.
-      openTab({ title: table, sql: T.selectRows(schema, table), run: true })
+      openTab({ title: table, sql: T.selectRows(d, schema, table), run: true })
     },
-    [openTab]
+    [openTab, d]
   )
 
+  /** `USE x` on MySQL, `SET search_path TO x` on Postgres. */
+  const switchSchema = (schema: string): void => {
+    setActiveSchema(sessionId, schema)
+    const tabId = conn.activeTabId
+    if (!tabId) return
+    void runQuery(sessionId, tabId, `${d.useSchema(schema)};`, {
+      label: `${d.useSchema(schema)}`
+    })
+  }
+
   const schemaMenu = (schema: string): MenuEntry[] => [
-    { label: 'Set as Default Schema', onSelect: () => {
-        setActiveSchema(sessionId, schema)
-        const tabId = conn.activeTabId
-        if (tabId) void runQuery(sessionId, tabId, `USE ${quoteIdent(schema)};`, { label: `USE ${schema}` })
-      }
-    },
+    { label: 'Set as Default Schema', onSelect: () => switchSchema(schema) },
     { separator: true },
     {
       label: 'Copy to clipboard: name',
@@ -210,18 +219,18 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
             /* fall through to the template */
           }
         }
-        copy(`CREATE DATABASE ${quoteIdent(schema)}`)
+        copy(T.createSchema(d, schema))
       }
     },
     { separator: true },
-    { label: 'Create schema…', onSelect: () => openTab({ title: 'Create schema', sql: T.createSchema() }) },
+    { label: 'Create schema…', onSelect: () => openTab({ title: 'Create schema', sql: T.createSchema(d) }) },
     {
       label: 'Alter schema…',
-      onSelect: () => openTab({ title: `Alter ${schema}`, sql: T.alterSchema(schema) })
+      onSelect: () => openTab({ title: `Alter ${schema}`, sql: T.alterSchema(d, schema) })
     },
     {
       label: 'Drop schema…',
-      onSelect: () => openTab({ title: `Drop ${schema}`, sql: T.dropSchema(schema) })
+      onSelect: () => openTab({ title: `Drop ${schema}`, sql: T.dropSchema(d, schema) })
     },
     { separator: true },
     { label: 'Refresh', onSelect: () => void refreshSchemas(sessionId, true) }
@@ -238,19 +247,19 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
         { separator: true },
         {
           label: 'Insert into statement',
-          onSelect: async () => copy(T.insertIntoTemplate(schema, table, await columnsFor(schema, table)))
+          onSelect: async () => copy(T.insertIntoTemplate(d, schema, table, await columnsFor(schema, table)))
         },
         {
           label: 'Insert set statement',
-          onSelect: async () => copy(T.insertSetTemplate(schema, table, await columnsFor(schema, table)))
+          onSelect: async () => copy(T.insertSetTemplate(d, schema, table, await columnsFor(schema, table)))
         },
         {
           label: 'Update statement',
-          onSelect: async () => copy(T.updateTemplate(schema, table, await columnsFor(schema, table)))
+          onSelect: async () => copy(T.updateTemplate(d, schema, table, await columnsFor(schema, table)))
         },
         {
           label: 'Delete statement',
-          onSelect: async () => copy(T.deleteTemplate(schema, table, await columnsFor(schema, table)))
+          onSelect: async () => copy(T.deleteTemplate(d, schema, table, await columnsFor(schema, table)))
         },
         { separator: true },
         {
@@ -271,7 +280,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
     {
       label: 'Create Table…',
       onSelect: () =>
-        openTab({ title: 'New table', kind: 'designer', designer: emptyDesigner(schema) })
+        openTab({ title: 'New table', kind: 'designer', designer: emptyDesigner(schema, engine) })
     },
     {
       label: 'Alter Table…',
@@ -280,11 +289,11 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
     },
     {
       label: 'Drop Table…',
-      onSelect: () => openTab({ title: `Drop ${table}`, sql: T.dropTable(schema, table) })
+      onSelect: () => openTab({ title: `Drop ${table}`, sql: T.dropTable(d, schema, table) })
     },
     {
       label: 'Truncate Table…',
-      onSelect: () => openTab({ title: `Truncate ${table}`, sql: T.truncateTable(schema, table) })
+      onSelect: () => openTab({ title: `Truncate ${table}`, sql: T.truncateTable(d, schema, table) })
     },
     { separator: true },
     { label: 'Refresh', onSelect: () => void refreshSchemas(sessionId, true) }
@@ -292,14 +301,17 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
 
   const columnMenu = (schema: string, table: string, column: string): MenuEntry[] => [
     { label: 'Copy column name', onSelect: () => copy(column) },
-    { label: 'Copy qualified name', onSelect: () => copy(`${qualify(schema, table)}.${quoteIdent(column)}`) },
+    {
+      label: 'Copy qualified name',
+      onSelect: () => copy(`${qualify(d, schema, table)}.${d.quoteIdent(column)}`)
+    },
     { separator: true },
     {
       label: `SELECT ${column} FROM ${table}`,
       onSelect: () =>
         openTab({
           title: table,
-          sql: `SELECT ${quoteIdent(column)} FROM ${qualify(schema, table)} LIMIT 1000;`,
+          sql: `SELECT ${d.quoteIdent(column)} FROM ${qualify(d, schema, table)} LIMIT 1000;`,
           run: true
         })
     }
@@ -319,9 +331,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
   const onNodeDoubleClick = (node: Node): void => {
     if (node.kind === 'schema') {
       // Non-modifying, so it runs immediately.
-      setActiveSchema(sessionId, node.name)
-      const tabId = conn.activeTabId
-      if (tabId) void runQuery(sessionId, tabId, `USE ${quoteIdent(node.name)};`, { label: `USE ${node.name}` })
+      switchSchema(node.name)
     } else if (node.kind === 'table') {
       selectRows(node.schema, node.name)
     }

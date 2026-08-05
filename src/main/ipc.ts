@@ -15,6 +15,9 @@ import * as store from './store'
 /** Live sessions, keyed by connection *tab* id — several may share a connectionId. */
 const sessions = new Map<string, Session>()
 
+/** In-flight connection tests, keyed by the token the renderer made for each. */
+const runningTests = new Map<string, { cancel?: () => void; cancelled: boolean }>()
+
 function broadcast(channel: string, payload: unknown): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed()) win.webContents.send(channel, payload)
@@ -72,9 +75,26 @@ export function registerIpc(): void {
     await closeSessionsFor(id)
     return store.deleteConnection(id)
   })
-  handle('connections:test', async (config: ConnectionConfig) =>
-    testConnection(config, await effectivePrefs(config))
-  )
+  handle('connections:test', async (config: ConnectionConfig, testId: string) => {
+    // Registered before the first await so a cancel that races the start still lands.
+    const entry: { cancel?: () => void; cancelled: boolean } = { cancelled: false }
+    runningTests.set(testId, entry)
+    try {
+      const test = testConnection(config, await effectivePrefs(config))
+      entry.cancel = test.cancel
+      if (entry.cancelled) test.cancel()
+      return await test.promise
+    } finally {
+      runningTests.delete(testId)
+    }
+  })
+  handle('connections:testCancel', (testId: string) => {
+    const entry = runningTests.get(testId)
+    if (!entry) return false
+    entry.cancelled = true
+    entry.cancel?.()
+    return true
+  })
   handle('connections:arrange', (placements: { id: string; groupId: string | null }[]) =>
     store.arrangeConnections(placements)
   )

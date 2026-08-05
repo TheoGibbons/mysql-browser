@@ -155,6 +155,26 @@ export class Session {
     return this.reconnecting
   }
 
+  /**
+   * Kills the worker outright, rejecting everything in flight. Used when a
+   * blocking operation (a connect that is waiting on a dead host) has to be
+   * abandoned — the thread cannot be interrupted any other way.
+   */
+  async abort(message: string): Promise<void> {
+    const worker = this.worker
+    this.terminated = true
+    this.worker = null
+    for (const [, entry] of this.pending) entry.reject(new SessionError(message))
+    this.pending.clear()
+    this.status = 'offline'
+    if (!worker) return
+    try {
+      await worker.terminate()
+    } catch {
+      /* already gone */
+    }
+  }
+
   async close(): Promise<void> {
     if (!this.worker) {
       this.status = 'offline'
@@ -227,18 +247,39 @@ export class Session {
   }
 }
 
-/** Runs a one-shot connectivity check in a throwaway worker. */
-export async function testConnection(
+/** Raised when a test is stopped by the user rather than by the server. */
+export const TEST_CANCELLED = 'Test cancelled.'
+
+/**
+ * Runs a one-shot connectivity check in a throwaway worker. `cancel` tears the
+ * worker down so a test hanging on an unreachable host can be given up on; the
+ * promise then rejects with {@link TEST_CANCELLED}.
+ */
+export function testConnection(
   config: ConnectionConfig,
   prefs: Preferences
-): Promise<{ serverVersion: string; latencyMs: number }> {
+): { promise: Promise<{ serverVersion: string; latencyMs: number }>; cancel: () => void } {
   const session = new Session('test', config, prefs, {
     onStatus: () => undefined,
     onLog: () => undefined
   })
-  try {
-    return await session['send']<'test'>({ type: 'test' })
-  } finally {
-    await session.close()
+  let cancelled = false
+
+  const promise = (async () => {
+    try {
+      return await session['send']<'test'>({ type: 'test' })
+    } catch (err) {
+      throw cancelled ? new SessionError(TEST_CANCELLED) : err
+    } finally {
+      await session.close()
+    }
+  })()
+
+  return {
+    promise,
+    cancel: () => {
+      cancelled = true
+      void session.abort(TEST_CANCELLED)
+    }
   }
 }

@@ -1,18 +1,35 @@
 /**
- * Turns the table designer's state into SQL.
+ * Turns the table designer's state into MySQL DDL.
  *
  * `create` emits a full CREATE TABLE. `alter` diffs against the snapshot taken
  * when the tab opened and emits only what actually changed.
+ *
+ * Postgres DDL comes out of `./designerSqlPg` — the two are kept apart on
+ * purpose. MySQL says everything in one ALTER TABLE's comma-separated clauses,
+ * where Postgres needs separate statements for renames, indexes and comments,
+ * so a shared generator would be a knot of conditionals. The *diffing* is
+ * common, and lives here for both to use.
  */
 
 import type {
   DesignerColumn,
   DesignerForeignKey,
   DesignerIndex,
-  DesignerState,
-  TableDefinition
+  DesignerState
 } from '@shared/types'
-import { qualify, quoteIdent, escapeString } from '@shared/sql'
+import { mysqlDialect, qualify as qualifyWith } from '@shared/dialect'
+import {
+  designerFromDefinition,
+  fkSignature,
+  indexSignature,
+  matchColumns,
+  type NameMapper
+} from './designerShared'
+
+const q = (name: string): string => mysqlDialect.quoteIdent(name)
+const esc = (value: string): string => mysqlDialect.escapeString(value)
+const qualify = (schema: string | null | undefined, table: string): string =>
+  qualifyWith(mysqlDialect, schema, table)
 
 /** Defaults that are keywords rather than literals, so they must not be quoted. */
 const BARE_DEFAULTS = /^(NULL|CURRENT_TIMESTAMP(\(\d*\))?|NOW\(\)|UUID\(\)|TRUE|FALSE|-?\d+(\.\d+)?)$/i
@@ -24,11 +41,11 @@ function defaultClause(column: DesignerColumn): string {
   if (BARE_DEFAULTS.test(value) || /^'.*'$/.test(value) || /^\(.*\)$/.test(value)) {
     return ` DEFAULT ${value}`
   }
-  return ` DEFAULT '${escapeString(value)}'`
+  return ` DEFAULT '${esc(value)}'`
 }
 
 export function columnDefinition(column: DesignerColumn): string {
-  const parts: string[] = [quoteIdent(column.name), column.dataType || 'VARCHAR(255)']
+  const parts: string[] = [q(column.name), column.dataType || 'VARCHAR(255)']
 
   if (column.un && !/unsigned/i.test(column.dataType)) parts.push('UNSIGNED')
   if (column.zf && !/zerofill/i.test(column.dataType)) parts.push('ZEROFILL')
@@ -42,7 +59,7 @@ export function columnDefinition(column: DesignerColumn): string {
   sql += column.nn ? ' NOT NULL' : ' NULL'
   sql += defaultClause(column)
   if (column.ai) sql += ' AUTO_INCREMENT'
-  if (column.comment) sql += ` COMMENT '${escapeString(column.comment)}'`
+  if (column.comment) sql += ` COMMENT '${esc(column.comment)}'`
   return sql
 }
 
@@ -52,7 +69,7 @@ function indexColumnList(index: DesignerIndex): string {
     .sort((a, b) => a.seq - b.seq)
     .map((c) => {
       const length = c.length && c.length.trim() !== '' ? `(${c.length})` : ''
-      return `${quoteIdent(c.column)}${length} ${c.order}`
+      return `${q(c.column)}${length} ${c.order}`
     })
     .join(', ')
 }
@@ -63,7 +80,7 @@ function indexDefinition(index: DesignerIndex): string | null {
 
   if (index.type === 'PRIMARY') return `PRIMARY KEY (${cols})`
 
-  const name = quoteIdent(index.name)
+  const name = q(index.name)
   let sql: string
   switch (index.type) {
     case 'UNIQUE':
@@ -84,15 +101,15 @@ function indexDefinition(index: DesignerIndex): string | null {
   if (index.keyBlockSize && index.keyBlockSize !== '0') sql += ` KEY_BLOCK_SIZE = ${index.keyBlockSize}`
   if (index.parser) sql += ` WITH PARSER ${index.parser}`
   if (!index.visible) sql += ' INVISIBLE'
-  if (index.comment) sql += ` COMMENT '${escapeString(index.comment)}'`
+  if (index.comment) sql += ` COMMENT '${esc(index.comment)}'`
   return sql
 }
 
 function foreignKeyDefinition(fk: DesignerForeignKey): string | null {
   if (fk.skip || fk.columns.length === 0 || !fk.referencedTable) return null
-  const local = fk.columns.map((c) => quoteIdent(c.column)).join(', ')
-  const remote = fk.columns.map((c) => quoteIdent(c.referencedColumn)).join(', ')
-  let sql = `CONSTRAINT ${quoteIdent(fk.name)}\n    FOREIGN KEY (${local})\n    REFERENCES ${qualify(
+  const local = fk.columns.map((c) => q(c.column)).join(', ')
+  const remote = fk.columns.map((c) => q(c.referencedColumn)).join(', ')
+  let sql = `CONSTRAINT ${q(fk.name)}\n    FOREIGN KEY (${local})\n    REFERENCES ${qualify(
     fk.referencedSchema,
     fk.referencedTable
   )} (${remote})`
@@ -112,12 +129,12 @@ export function buildCreateTable(state: DesignerState): string {
   const pkColumns = state.columns.filter((c) => c.pk && c.name.trim())
   const hasExplicitPrimary = state.indexes.some((i) => i.type === 'PRIMARY')
   if (pkColumns.length > 0 && !hasExplicitPrimary) {
-    body.push(`  PRIMARY KEY (${pkColumns.map((c) => quoteIdent(c.name)).join(', ')})`)
+    body.push(`  PRIMARY KEY (${pkColumns.map((c) => q(c.name)).join(', ')})`)
   }
 
   for (const column of state.columns) {
     if (column.uq && !column.pk && column.name.trim()) {
-      body.push(`  UNIQUE INDEX ${quoteIdent(`${column.name}_UNIQUE`)} (${quoteIdent(column.name)} ASC)`)
+      body.push(`  UNIQUE INDEX ${q(`${column.name}_UNIQUE`)} (${q(column.name)} ASC)`)
     }
   }
 
@@ -141,97 +158,13 @@ export function buildCreateTable(state: DesignerState): string {
   if (state.engine) sql += `\nENGINE = ${state.engine}`
   if (state.charset) sql += `\nDEFAULT CHARACTER SET = ${state.charset}`
   if (state.collation) sql += `\nCOLLATE = ${state.collation}`
-  if (state.comment) sql += `\nCOMMENT = '${escapeString(state.comment)}'`
+  if (state.comment) sql += `\nCOMMENT = '${esc(state.comment)}'`
   return sql + ';'
 }
 
 // ---------------------------------------------------------------------------
 // ALTER
 // ---------------------------------------------------------------------------
-
-function indexSignature(index: DesignerIndex): string {
-  return [
-    index.type,
-    index.columns
-      .slice()
-      .sort((a, b) => a.seq - b.seq)
-      .map((c) => `${c.column}:${c.order}:${c.length || ''}`)
-      .join('|'),
-    index.storageType,
-    index.visible ? 'v' : 'i',
-    index.comment
-  ].join('~')
-}
-
-function fkSignature(fk: DesignerForeignKey): string {
-  return [
-    fk.referencedSchema,
-    fk.referencedTable,
-    fk.columns.map((c) => `${c.column}>${c.referencedColumn}`).join('|'),
-    fk.onUpdate,
-    fk.onDelete
-  ].join('~')
-}
-
-/** Rebuilds designer state from a live table so ALTER can diff against it. */
-export function designerFromDefinition(definition: TableDefinition): DesignerState {
-  return {
-    mode: 'alter',
-    schema: definition.schema,
-    tableName: definition.name,
-    originalName: definition.name,
-    charset: definition.charset,
-    collation: definition.collation,
-    engine: definition.engine,
-    comment: definition.comment,
-    columns: definition.columns.map((c, i) => ({
-      key: `c${i}`,
-      name: c.name,
-      dataType: c.dataType.toUpperCase(),
-      pk: c.isPrimaryKey,
-      nn: !c.isNullable,
-      uq: c.isUnique,
-      b: c.isBinary,
-      un: c.isUnsigned,
-      zf: c.isZeroFill,
-      ai: c.isAutoIncrement,
-      g: c.isGenerated,
-      defaultValue: c.defaultValue ?? '',
-      charset: c.charset ?? '',
-      collation: c.collation ?? '',
-      comment: c.comment
-    })),
-    indexes: definition.indexes.map((idx, i) => ({
-      key: `i${i}`,
-      name: idx.name,
-      type: idx.type,
-      storageType: idx.storageType,
-      keyBlockSize: '0',
-      parser: '',
-      visible: idx.visible,
-      comment: idx.comment,
-      columns: idx.columns.map((c) => ({
-        column: c.column,
-        seq: c.seq,
-        order: c.order,
-        length: c.length === null ? '' : String(c.length)
-      }))
-    })),
-    foreignKeys: definition.foreignKeys.map((fk, i) => ({
-      key: `f${i}`,
-      name: fk.name,
-      referencedSchema: fk.referencedSchema,
-      referencedTable: fk.referencedTable,
-      onUpdate: fk.onUpdate,
-      onDelete: fk.onDelete,
-      comment: '',
-      skip: false,
-      columns: fk.columns.map((c) => ({ ...c }))
-    })),
-    activeSection: 'columns',
-    original: definition
-  }
-}
 
 export function buildAlterTable(state: DesignerState): string {
   const original = state.original
@@ -241,40 +174,43 @@ export function buildAlterTable(state: DesignerState): string {
   const clauses: string[] = []
 
   // --- columns ---
-  const originalByName = new Map(original.columns.map((c) => [c.name, c]))
-  const currentNames = new Set(state.columns.map((c) => c.name).filter(Boolean))
-
-  for (const column of original.columns) {
-    if (!currentNames.has(column.name)) clauses.push(`DROP COLUMN ${quoteIdent(column.name)}`)
-  }
-
   const originalDesigner = designerFromDefinition(original)
-  const originalDesignerByName = new Map(originalDesigner.columns.map((c) => [c.name, c]))
+  const { matched, dropped, renamedBack } = matchColumns(state, originalDesigner)
+
+  for (const column of dropped) clauses.push(`DROP COLUMN ${q(column.name)}`)
 
   state.columns.forEach((column, index) => {
     if (!column.name.trim()) return
-    const previous = originalDesignerByName.get(column.name)
-    const after =
-      index === 0 ? ' FIRST' : ` AFTER ${quoteIdent(state.columns[index - 1].name)}`
+    const previous = matched.get(column.key)
 
     if (!previous) {
+      const after = index === 0 ? ' FIRST' : ` AFTER ${q(state.columns[index - 1].name)}`
       clauses.push(`ADD COLUMN ${columnDefinition(column)}${after}`)
       return
     }
     if (columnDefinition(previous) !== columnDefinition(column)) {
-      clauses.push(`CHANGE COLUMN ${quoteIdent(previous.name)} ${columnDefinition(column)}`)
+      clauses.push(`CHANGE COLUMN ${q(previous.name)} ${columnDefinition(column)}`)
     }
   })
 
   // --- primary key ---
-  const originalPk = original.columns.filter((c) => c.isPrimaryKey).map((c) => c.name)
-  const currentPk = state.columns.filter((c) => c.pk && c.name.trim()).map((c) => c.name)
-  if (originalPk.join(',') !== currentPk.join(',')) {
+  // Compared by identity too, so renaming a PK column doesn't drop and re-add
+  // the key (which fails outright on an AUTO_INCREMENT column).
+  const originalPk = originalDesigner.columns.filter((c) => c.pk)
+  const currentPk = state.columns.filter((c) => c.pk && c.name.trim())
+  const originalPkKeys = originalPk.map((c) => c.key).join(',')
+  const currentPkKeys = currentPk.map((c) => matched.get(c.key)?.key ?? c.key).join(',')
+  if (originalPkKeys !== currentPkKeys) {
     if (originalPk.length > 0) clauses.push('DROP PRIMARY KEY')
     if (currentPk.length > 0) {
-      clauses.push(`ADD PRIMARY KEY (${currentPk.map(quoteIdent).join(', ')})`)
+      clauses.push(`ADD PRIMARY KEY (${currentPk.map((c) => q(c.name)).join(', ')})`)
     }
   }
+
+  // Renames are already carried by CHANGE COLUMN, and MySQL updates the
+  // indexes and keys that reference the column, so compare those under the
+  // snapshot's names.
+  const canonical: NameMapper = (name) => renamedBack.get(name) ?? name
 
   // --- indexes (PRIMARY handled above) ---
   const originalIndexes = new Map(
@@ -284,15 +220,21 @@ export function buildAlterTable(state: DesignerState): string {
     state.indexes.filter((i) => i.type !== 'PRIMARY').map((i) => [i.name, i])
   )
 
+  // MySQL creates an index of its own to back each foreign key, and refuses to
+  // drop it while that key is still there. Those indexes are not the user's to
+  // remove, so leaving one alone beats emitting SQL the server will reject.
+  const keptFkNames = new Set(state.foreignKeys.filter((f) => !f.skip).map((f) => f.name))
+
   for (const [name, index] of originalIndexes) {
     const current = currentIndexes.get(name)
-    if (!current || indexSignature(current) !== indexSignature(index)) {
-      clauses.push(`DROP INDEX ${quoteIdent(name)}`)
+    if (!current || indexSignature(current, canonical) !== indexSignature(index)) {
+      if (keptFkNames.has(name)) continue
+      clauses.push(`DROP INDEX ${q(name)}`)
     }
   }
   for (const [name, index] of currentIndexes) {
     const previous = originalIndexes.get(name)
-    if (!previous || indexSignature(previous) !== indexSignature(index)) {
+    if (!previous || indexSignature(previous) !== indexSignature(index, canonical)) {
       const sql = indexDefinition(index)
       if (sql) clauses.push(`ADD ${sql}`)
     }
@@ -304,13 +246,13 @@ export function buildAlterTable(state: DesignerState): string {
 
   for (const [name, fk] of originalFks) {
     const current = currentFks.get(name)
-    if (!current || fkSignature(current) !== fkSignature(fk)) {
-      clauses.push(`DROP FOREIGN KEY ${quoteIdent(name)}`)
+    if (!current || fkSignature(current, canonical) !== fkSignature(fk)) {
+      clauses.push(`DROP FOREIGN KEY ${q(name)}`)
     }
   }
   for (const [name, fk] of currentFks) {
     const previous = originalFks.get(name)
-    if (!previous || fkSignature(previous) !== fkSignature(fk)) {
+    if (!previous || fkSignature(previous) !== fkSignature(fk, canonical)) {
       const sql = foreignKeyDefinition(fk)
       if (sql) clauses.push(`ADD ${sql}`)
     }
@@ -325,69 +267,13 @@ export function buildAlterTable(state: DesignerState): string {
     clauses.push(`CHARACTER SET = ${state.charset} , COLLATE = ${state.collation}`)
   }
   if (state.comment !== original.comment) {
-    clauses.push(`COMMENT = '${escapeString(state.comment)}'`)
+    clauses.push(`COMMENT = '${esc(state.comment)}'`)
   }
 
   if (clauses.length === 0) return `-- No changes to apply to ${target}.`
   return `ALTER TABLE ${target}\n${clauses.map((c) => '  ' + c).join(',\n')};`
 }
 
-export function buildDesignerSql(state: DesignerState): string {
+export function buildMysqlDesignerSql(state: DesignerState): string {
   return state.mode === 'create' ? buildCreateTable(state) : buildAlterTable(state)
-}
-
-export function emptyDesigner(schema: string): DesignerState {
-  return {
-    mode: 'create',
-    schema,
-    tableName: 'new_table',
-    originalName: '',
-    charset: 'utf8mb4',
-    collation: 'utf8mb4_0900_ai_ci',
-    engine: 'InnoDB',
-    comment: '',
-    columns: [
-      {
-        key: 'c0',
-        name: 'id',
-        dataType: 'INT',
-        pk: true,
-        nn: true,
-        uq: false,
-        b: false,
-        un: false,
-        zf: false,
-        ai: true,
-        g: false,
-        defaultValue: '',
-        charset: '',
-        collation: '',
-        comment: ''
-      }
-    ],
-    indexes: [],
-    foreignKeys: [],
-    activeSection: 'columns',
-    original: null
-  }
-}
-
-export function newDesignerColumn(key: string): DesignerColumn {
-  return {
-    key,
-    name: '',
-    dataType: 'VARCHAR(45)',
-    pk: false,
-    nn: false,
-    uq: false,
-    b: false,
-    un: false,
-    zf: false,
-    ai: false,
-    g: false,
-    defaultValue: '',
-    charset: '',
-    collation: '',
-    comment: ''
-  }
 }

@@ -169,7 +169,7 @@ export function PreferencesDialog({ connection, onClose }: Props): JSX.Element {
       </fieldset>
 
       <fieldset className="group">
-        <legend>MySQL Session</legend>
+        <legend>Database Session</legend>
         <div className="prefs-grid">
           <NumberField
             label="DBMS connection keep-alive interval:"

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
+  DbEngine,
   DesignerColumn,
   DesignerForeignKey,
   DesignerIndex,
@@ -11,10 +12,10 @@ import {
   designerFromDefinition,
   emptyDesigner,
   newDesignerColumn
-} from '../lib/designerSql'
+} from '../lib/designer'
 import { Splitter } from './ui/Splitter'
 
-const COMMON_TYPES = [
+const MYSQL_TYPES = [
   'INT',
   'INT UNSIGNED',
   'BIGINT',
@@ -42,9 +43,43 @@ const COMMON_TYPES = [
   'SET(\'a\',\'b\')'
 ]
 
+const POSTGRES_TYPES = [
+  'integer',
+  'bigint',
+  'smallint',
+  'numeric(10,2)',
+  'real',
+  'double precision',
+  'boolean',
+  'uuid',
+  'varchar(45)',
+  'varchar(255)',
+  'text',
+  'char(36)',
+  'json',
+  'jsonb',
+  'date',
+  'timestamp',
+  'timestamptz',
+  'time',
+  'interval',
+  'bytea',
+  'inet',
+  'text[]',
+  'integer[]'
+]
+
 const ENGINES = ['InnoDB', 'MyISAM', 'MEMORY', 'ARCHIVE', 'CSV']
 const FK_ACTIONS = ['', 'RESTRICT', 'CASCADE', 'SET NULL', 'NO ACTION']
-const INDEX_TYPES: DesignerIndex['type'][] = ['INDEX', 'UNIQUE', 'PRIMARY', 'FULLTEXT', 'SPATIAL']
+const MYSQL_INDEX_TYPES: DesignerIndex['type'][] = [
+  'INDEX',
+  'UNIQUE',
+  'PRIMARY',
+  'FULLTEXT',
+  'SPATIAL'
+]
+/** Postgres expresses full-text and spatial through the index method instead. */
+const POSTGRES_INDEX_TYPES: DesignerIndex['type'][] = ['INDEX', 'UNIQUE', 'PRIMARY']
 
 const FALLBACK_CHARSETS = [
   { charset: 'utf8mb4', collations: ['utf8mb4_0900_ai_ci', 'utf8mb4_general_ci', 'utf8mb4_unicode_ci', 'utf8mb4_bin'] },
@@ -52,11 +87,30 @@ const FALLBACK_CHARSETS = [
   { charset: 'ascii', collations: ['ascii_general_ci', 'ascii_bin'] }
 ]
 
+/**
+ * Column attributes, and which servers have them. MySQL's unsigned, zero-fill
+ * and per-column binary flags have no Postgres equivalent, so they are hidden
+ * rather than generating DDL the server would reject.
+ */
+const COLUMN_FLAGS: { flag: keyof DesignerColumn; short: string; label: string; mysqlOnly?: true }[] =
+  [
+    { flag: 'pk', short: 'PK', label: 'Primary Key' },
+    { flag: 'nn', short: 'NN', label: 'Not Null' },
+    { flag: 'uq', short: 'UQ', label: 'Unique' },
+    { flag: 'b', short: 'B', label: 'Binary', mysqlOnly: true },
+    { flag: 'un', short: 'UN', label: 'Unsigned', mysqlOnly: true },
+    { flag: 'zf', short: 'ZF', label: 'Zero Fill', mysqlOnly: true },
+    { flag: 'ai', short: 'AI', label: 'Auto Increment' },
+    { flag: 'g', short: 'G', label: 'Generated' }
+  ]
+
 interface Props {
   sessionId: string
   state: DesignerState
   schemas: SchemaInfo[]
   connected: boolean
+  /** Decides the DDL flavour, the type list and which column flags apply. */
+  engine: DbEngine
   onChange(state: DesignerState): void
   /** Never runs SQL — opens a tab with the statement for the user to run. */
   onApply(sql: string): void
@@ -67,9 +121,14 @@ export function TableDesigner({
   state,
   schemas,
   connected,
+  engine,
   onChange,
   onApply
 }: Props): JSX.Element {
+  const isPostgres = engine === 'postgres'
+  const commonTypes = isPostgres ? POSTGRES_TYPES : MYSQL_TYPES
+  const indexTypes = isPostgres ? POSTGRES_INDEX_TYPES : MYSQL_INDEX_TYPES
+  const columnFlags = COLUMN_FLAGS.filter((f) => !(isPostgres && f.mysqlOnly))
   const [detailHeight, setDetailHeight] = useState(170)
   const [selectedColumn, setSelectedColumn] = useState<string | null>(state.columns[0]?.key ?? null)
   const [selectedIndex, setSelectedIndex] = useState<string | null>(state.indexes[0]?.key ?? null)
@@ -96,7 +155,7 @@ export function TableDesigner({
     [onChange, state]
   )
 
-  const sql = useMemo(() => buildDesignerSql(state), [state])
+  const sql = useMemo(() => buildDesignerSql(engine, state), [engine, state])
 
   const collationsFor = (charset: string): string[] =>
     charsets.find((c) => c.charset === charset)?.collations ?? []
@@ -104,7 +163,31 @@ export function TableDesigner({
   // --- columns ------------------------------------------------------------
 
   const patchColumn = (key: string, next: Partial<DesignerColumn>): void => {
-    patch({ columns: state.columns.map((c) => (c.key === key ? { ...c, ...next } : c)) })
+    const previous = state.columns.find((c) => c.key === key)
+    const columns = state.columns.map((c) => (c.key === key ? { ...c, ...next } : c))
+    const renamedFrom =
+      previous && next.name !== undefined && next.name !== previous.name ? previous.name : null
+
+    if (renamedFrom === null || renamedFrom === '') {
+      patch({ columns })
+      return
+    }
+
+    // Indexes and foreign keys refer to columns by name, so carry the rename
+    // through them — otherwise they keep pointing at a column that no longer
+    // exists under that name.
+    const renamed = (name: string): string => (name === renamedFrom ? (next.name as string) : name)
+    patch({
+      columns,
+      indexes: state.indexes.map((i) => ({
+        ...i,
+        columns: i.columns.map((c) => ({ ...c, column: renamed(c.column) }))
+      })),
+      foreignKeys: state.foreignKeys.map((f) => ({
+        ...f,
+        columns: f.columns.map((c) => ({ ...c, column: renamed(c.column) }))
+      }))
+    })
   }
 
   const addColumn = (): void => {
@@ -145,6 +228,9 @@ export function TableDesigner({
       keyBlockSize: '0',
       parser: '',
       visible: true,
+      // An index added here is a plain one; constraint-backed indexes only
+      // arrive by reading an existing table.
+      isConstraint: false,
       comment: '',
       columns: []
     }
@@ -216,8 +302,8 @@ export function TableDesigner({
   const revert = (): void => {
     onChange(
       state.original
-        ? designerFromDefinition(state.original)
-        : { ...emptyDesigner(state.schema), tableName: state.tableName }
+        ? designerFromDefinition(state.original, engine)
+        : { ...emptyDesigner(state.schema, engine), tableName: state.tableName }
     )
   }
 
@@ -255,49 +341,55 @@ export function TableDesigner({
             ))}
           </select>
 
-          <label>Charset/Collation:</label>
-          <div className="row" style={{ gap: 6 }}>
-            <select
-              className="field"
-              style={{ width: 150 }}
-              value={state.charset}
-              onChange={(e) => {
-                const charset = e.target.value
-                patch({ charset, collation: collationsFor(charset)[0] ?? '' })
-              }}
-            >
-              {charsets.map((c) => (
-                <option key={c.charset} value={c.charset}>
-                  {c.charset}
-                </option>
-              ))}
-            </select>
-            <select
-              className="field"
-              style={{ width: 200 }}
-              value={state.collation}
-              onChange={(e) => patch({ collation: e.target.value })}
-            >
-              {collationsFor(state.charset).map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
-          <label>Engine:</label>
-          <select
-            className="field"
-            style={{ minWidth: 150 }}
-            value={state.engine}
-            onChange={(e) => patch({ engine: e.target.value })}
-          >
-            {ENGINES.map((e) => (
-              <option key={e} value={e}>
-                {e}
-              </option>
-            ))}
-          </select>
+          {/* A Postgres table has neither: its encoding belongs to the
+              database, and there is no storage engine to choose. */}
+          {!isPostgres && (
+            <>
+              <label>Charset/Collation:</label>
+              <div className="row" style={{ gap: 6 }}>
+                <select
+                  className="field"
+                  style={{ width: 150 }}
+                  value={state.charset}
+                  onChange={(e) => {
+                    const charset = e.target.value
+                    patch({ charset, collation: collationsFor(charset)[0] ?? '' })
+                  }}
+                >
+                  {charsets.map((c) => (
+                    <option key={c.charset} value={c.charset}>
+                      {c.charset}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="field"
+                  style={{ width: 200 }}
+                  value={state.collation}
+                  onChange={(e) => patch({ collation: e.target.value })}
+                >
+                  {collationsFor(state.charset).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <label>Engine:</label>
+              <select
+                className="field"
+                style={{ minWidth: 150 }}
+                value={state.engine}
+                onChange={(e) => patch({ engine: e.target.value })}
+              >
+                {ENGINES.map((e) => (
+                  <option key={e} value={e}>
+                    {e}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
 
           <label style={{ alignSelf: 'start', paddingTop: 3 }}>Comments:</label>
           <textarea
@@ -346,8 +438,8 @@ export function TableDesigner({
                 <colgroup>
                   <col style={{ width: '26%' }} />
                   <col style={{ width: '22%' }} />
-                  {Array.from({ length: 8 }).map((_, i) => (
-                    <col key={i} style={{ width: 30 }} />
+                  {columnFlags.map((f) => (
+                    <col key={String(f.flag)} style={{ width: 30 }} />
                   ))}
                   <col />
                 </colgroup>
@@ -355,14 +447,11 @@ export function TableDesigner({
                   <tr>
                     <th>Column Name</th>
                     <th>Datatype</th>
-                    <th title="Primary Key">PK</th>
-                    <th title="Not Null">NN</th>
-                    <th title="Unique">UQ</th>
-                    <th title="Binary">B</th>
-                    <th title="Unsigned">UN</th>
-                    <th title="Zero Fill">ZF</th>
-                    <th title="Auto Increment">AI</th>
-                    <th title="Generated">G</th>
+                    {columnFlags.map((f) => (
+                      <th key={String(f.flag)} title={f.label}>
+                        {f.short}
+                      </th>
+                    ))}
                     <th>Default/Expression</th>
                   </tr>
                 </thead>
@@ -389,18 +478,7 @@ export function TableDesigner({
                           onChange={(e) => patchColumn(column.key, { dataType: e.target.value })}
                         />
                       </td>
-                      {(
-                        [
-                          ['pk', 'pk'],
-                          ['nn', 'nn'],
-                          ['uq', 'uq'],
-                          ['b', 'b'],
-                          ['un', 'un'],
-                          ['zf', 'zf'],
-                          ['ai', 'ai'],
-                          ['g', 'g']
-                        ] as [keyof DesignerColumn, string][]
-                      ).map(([flag]) => (
+                      {columnFlags.map(({ flag }) => (
                         <td key={String(flag)} className="check">
                           <input
                             type="checkbox"
@@ -427,7 +505,7 @@ export function TableDesigner({
                 </tbody>
               </table>
               <datalist id="designer-types">
-                {COMMON_TYPES.map((t) => (
+                {commonTypes.map((t) => (
                   <option key={t} value={t} />
                 ))}
               </datalist>
@@ -459,23 +537,27 @@ export function TableDesigner({
                       value={activeColumn.name}
                       onChange={(e) => patchColumn(activeColumn.key, { name: e.target.value })}
                     />
-                    <label>Charset/Collation:</label>
+                    {/* Postgres columns can be collated, but the encoding is a
+                        property of the database, so there is no charset to pick. */}
+                    <label>{isPostgres ? 'Collation:' : 'Charset/Collation:'}</label>
                     <div className="row" style={{ gap: 5 }}>
-                      <select
-                        className="field"
-                        style={{ flex: 1 }}
-                        value={activeColumn.charset}
-                        onChange={(e) =>
-                          patchColumn(activeColumn.key, { charset: e.target.value, collation: '' })
-                        }
-                      >
-                        <option value="">Default Charset</option>
-                        {charsets.map((c) => (
-                          <option key={c.charset} value={c.charset}>
-                            {c.charset}
-                          </option>
-                        ))}
-                      </select>
+                      {!isPostgres && (
+                        <select
+                          className="field"
+                          style={{ flex: 1 }}
+                          value={activeColumn.charset}
+                          onChange={(e) =>
+                            patchColumn(activeColumn.key, { charset: e.target.value, collation: '' })
+                          }
+                        >
+                          <option value="">Default Charset</option>
+                          {charsets.map((c) => (
+                            <option key={c.charset} value={c.charset}>
+                              {c.charset}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                       <select
                         className="field"
                         style={{ flex: 1 }}
@@ -483,7 +565,10 @@ export function TableDesigner({
                         onChange={(e) => patchColumn(activeColumn.key, { collation: e.target.value })}
                       >
                         <option value="">Default Collation</option>
-                        {collationsFor(activeColumn.charset).map((c) => (
+                        {(isPostgres
+                          ? (charsets[0]?.collations ?? [])
+                          : collationsFor(activeColumn.charset)
+                        ).map((c) => (
                           <option key={c} value={c}>
                             {c}
                           </option>
@@ -515,18 +600,7 @@ export function TableDesigner({
                     />
                     <label style={{ alignSelf: 'start', paddingTop: 3 }}>Storage:</label>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 4 }}>
-                      {(
-                        [
-                          ['pk', 'Primary Key'],
-                          ['nn', 'Not Null'],
-                          ['uq', 'Unique'],
-                          ['b', 'Binary'],
-                          ['un', 'Unsigned'],
-                          ['zf', 'Zero Fill'],
-                          ['ai', 'Auto Increment'],
-                          ['g', 'Generated']
-                        ] as [keyof DesignerColumn, string][]
-                      ).map(([flag, label]) => (
+                      {columnFlags.map(({ flag, label }) => (
                         <label className="checkline" key={String(flag)}>
                           <input
                             type="checkbox"
@@ -602,7 +676,7 @@ export function TableDesigner({
                               patchIndex(index.key, { type: e.target.value as DesignerIndex['type'] })
                             }
                           >
-                            {INDEX_TYPES.map((t) => (
+                            {indexTypes.map((t) => (
                               <option key={t} value={t}>
                                 {t}
                               </option>
@@ -713,27 +787,39 @@ export function TableDesigner({
                     onChange={(e) => patchIndex(activeIndex.key, { storageType: e.target.value })}
                   >
                     <option value="">(default)</option>
-                    <option value="BTREE">BTREE</option>
-                    <option value="HASH">HASH</option>
+                    {(isPostgres
+                      ? ['BTREE', 'HASH', 'GIN', 'GIST', 'BRIN', 'SPGIST']
+                      : ['BTREE', 'HASH']
+                    ).map((method) => (
+                      <option key={method} value={method}>
+                        {method}
+                      </option>
+                    ))}
                   </select>
-                  <label>Key Block Size:</label>
-                  <input
-                    className="field"
-                    value={activeIndex.keyBlockSize}
-                    onChange={(e) => patchIndex(activeIndex.key, { keyBlockSize: e.target.value })}
-                  />
-                  <label>Parser:</label>
-                  <input
-                    className="field"
-                    value={activeIndex.parser}
-                    onChange={(e) => patchIndex(activeIndex.key, { parser: e.target.value })}
-                  />
-                  <label>Visible:</label>
-                  <input
-                    type="checkbox"
-                    checked={activeIndex.visible}
-                    onChange={(e) => patchIndex(activeIndex.key, { visible: e.target.checked })}
-                  />
+                  {/* Key block size, full-text parsers and invisible indexes are
+                      all MySQL-only knobs. */}
+                  {!isPostgres && (
+                    <>
+                      <label>Key Block Size:</label>
+                      <input
+                        className="field"
+                        value={activeIndex.keyBlockSize}
+                        onChange={(e) => patchIndex(activeIndex.key, { keyBlockSize: e.target.value })}
+                      />
+                      <label>Parser:</label>
+                      <input
+                        className="field"
+                        value={activeIndex.parser}
+                        onChange={(e) => patchIndex(activeIndex.key, { parser: e.target.value })}
+                      />
+                      <label>Visible:</label>
+                      <input
+                        type="checkbox"
+                        checked={activeIndex.visible}
+                        onChange={(e) => patchIndex(activeIndex.key, { visible: e.target.checked })}
+                      />
+                    </>
+                  )}
                   <label style={{ alignSelf: 'start', paddingTop: 3 }}>Comment:</label>
                   <textarea
                     className="field"

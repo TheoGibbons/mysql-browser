@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ConnectionConfig, ConnectionGroup } from '@shared/types'
+import { engineOf } from '@shared/types'
 import { useAppStore } from '../store'
 import { useContextMenu } from './ui/ContextMenu'
 import { ExportIcon, ImportIcon, NewGroupIcon, PlusIcon, SearchIcon } from './ui/Icons'
@@ -10,21 +11,23 @@ import { newId } from '../lib/ids'
 import { isValidHex, readableDimColor, readableTextColor } from '../lib/color'
 
 function endpoint(config: ConnectionConfig): string {
-  if (config.method === 'ssh') {
-    return `${config.sshUser ? `${config.sshUser}@` : ''}${config.sshHost ?? ''} → ${config.host}:${config.port}`
-  }
-  return `${config.host}:${config.port}`
+  const server =
+    config.method === 'ssh'
+      ? `${config.sshUser ? `${config.sshUser}@` : ''}${config.sshHost ?? ''} → ${config.host}:${config.port}`
+      : `${config.host}:${config.port}`
+  // A Postgres connection is pinned to one database, so which one is part of
+  // identifying the connection in a way a MySQL host:port is not.
+  const database = engineOf(config) === 'postgres' ? config.database?.trim() : ''
+  return database ? `${server}/${database}` : server
 }
 
 function methodBadge(config: ConnectionConfig): string | null {
-  switch (config.method) {
-    case 'ssh':
-      return 'SSH'
-    case 'iam':
-      return 'AWS IAM'
-    default:
-      return null
-  }
+  const method =
+    config.method === 'ssh' ? 'SSH' : config.method === 'iam' ? 'AWS IAM' : null
+  // Existing MySQL cards keep the badge they have always had; only Postgres
+  // needs calling out, because it is the new thing on the screen.
+  if (engineOf(config) !== 'postgres') return method
+  return method ? `PG · ${method}` : 'PG'
 }
 
 function plural(count: number, word: string): string {
@@ -707,7 +710,7 @@ export function HomePage(): JSX.Element {
   return (
     <div className="home">
       <div className="home-head">
-        <h1>MySQL Connections</h1>
+        <h1>Connections</h1>
         <button
           className="icon-btn"
           title="Add new connection"

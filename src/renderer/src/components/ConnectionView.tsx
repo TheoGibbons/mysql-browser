@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format as formatSql } from 'sql-formatter'
 import type { DesignerState, QueryTabState } from '@shared/types'
 import { hasModifyingStatement, statementAt } from '@shared/sql'
+import { dialectFor } from '@shared/dialect'
+import { engineOf } from '@shared/types'
 import { gridKey, useAppStore, useGridStore, type ConnTab, type NewTabOptions } from '../store'
 import { buildApplyPlan, isDirty, toCsv, toJson, toSqlInserts, toTsv, visibleRefs } from '../lib/grid'
 import { isValidHex, tint } from '../lib/color'
@@ -35,6 +37,9 @@ interface Props {
 
 export function ConnectionView({ conn }: Props): JSX.Element {
   const { sessionId, tabs, activeTabId, running, layout, status } = conn
+
+  const engine = engineOf(conn.config)
+  const d = dialectFor(engine)
 
   const prefs = useAppStore((s) => s.prefs)
   const newTab = useAppStore((s) => s.newTab)
@@ -126,13 +131,13 @@ export function ConnectionView({ conn }: Props): JSX.Element {
 
       // EXPLAIN never modifies; otherwise, gate modifying SQL behind the loud
       // confirmation when the connection opts in.
-      if (mode !== 'explain' && conn.config.confirmModifying && hasModifyingStatement(sql)) {
+      if (mode !== 'explain' && conn.config.confirmModifying && hasModifyingStatement(sql, engine)) {
         setPendingModify({ sql })
         return
       }
       runResolved(sql, mode === 'explain')
     },
-    [activeTab, conn.config.confirmModifying, runResolved]
+    [activeTab, conn.config.confirmModifying, runResolved, engine]
   )
 
   const prettify = useCallback(() => {
@@ -142,9 +147,16 @@ export function ConnectionView({ conn }: Props): JSX.Element {
     const statement = api.getStatementAtCursor()
     if (!statement) return
     try {
-      const pretty = formatSql(statement, { language: 'mysql', keywordCase: 'upper' })
+      const pretty = formatSql(statement, {
+        language: engine === 'postgres' ? 'postgresql' : 'mysql',
+        keywordCase: 'upper'
+      })
       // Replace just the statement under the caret, leaving the rest untouched.
-      const found = statementAt(full, full.indexOf(statement) >= 0 ? full.indexOf(statement) : 0)
+      const found = statementAt(
+        full,
+        full.indexOf(statement) >= 0 ? full.indexOf(statement) : 0,
+        engine
+      )
       if (!found) return
       api.setSql(full.slice(0, found.start) + pretty + full.slice(found.end))
     } catch (err) {
@@ -195,7 +207,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
 
   const openApplyModal = (): void => {
     if (!result || !grid) return
-    const plan = buildApplyPlan(result, grid)
+    const plan = buildApplyPlan(d, result, grid)
     if (plan.blockedReason) {
       window.alert(plan.blockedReason)
       return
@@ -257,7 +269,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
       { label: 'Export as JSON…', onSelect: () => void save(toJson(result, grid, refs), 'json', 'JSON') },
       {
         label: 'Export as SQL INSERTs…',
-        onSelect: () => void save(toSqlInserts(result, grid, refs), 'sql', 'SQL')
+        onSelect: () => void save(toSqlInserts(d, result, grid, refs), 'sql', 'SQL')
       },
       { separator: true },
       {
@@ -301,7 +313,11 @@ export function ConnectionView({ conn }: Props): JSX.Element {
         <span className={`status-dot ${status}`} />
         <span className="status-text" title={conn.statusMessage}>
           {status === 'connected'
-            ? `Connected${conn.serverVersion ? ` — MySQL ${conn.serverVersion}` : ''}${
+            ? `Connected${
+                conn.serverVersion
+                  ? ` — ${engine === 'postgres' ? 'PostgreSQL' : 'MySQL'} ${conn.serverVersion}`
+                  : ''
+              }${
                 conn.activeSchema ? ` · ${conn.activeSchema}` : ''
               }`
             : status === 'connecting'
@@ -476,6 +492,8 @@ function TabContent({
   onLayoutCommit
 }: TabContentProps): JSX.Element {
   const prefs = useAppStore((s) => s.prefs)
+  const engine = engineOf(conn.config)
+  const d = dialectFor(engine)
 
   if (tab.kind === 'export' || tab.kind === 'import') {
     return <ExportImportTab kind={tab.kind} config={conn.config} prefs={prefs} />
@@ -488,6 +506,7 @@ function TabContent({
         state={tab.designer}
         schemas={conn.schemas}
         connected={conn.status === 'connected'}
+        engine={engine}
         onChange={onDesignerChange}
         onApply={(sql) =>
           // Never runs by itself — the statement lands in a new tab for review.
@@ -561,6 +580,7 @@ function TabContent({
             void useAppStore.getState().loadSchemaColumns(conn.sessionId, schema)
           }
           background={isValidHex(conn.config.color) ? tint(conn.config.color!, 0.14) : undefined}
+          engine={engine}
         />
       </div>
 
@@ -606,6 +626,7 @@ function TabContent({
               patch={patchGrid}
               update={updateGrid}
               editable={canEdit}
+              dialect={d}
             />
           </div>
         </>

@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import type { ConnectionConfig, ConnectionMethod } from '@shared/types'
+import { useEffect, useRef, useState } from 'react'
+import type { ConnectionConfig, ConnectionMethod, DbEngine } from '@shared/types'
+import { DEFAULT_PORTS, engineOf } from '@shared/types'
 import { Modal } from './ui/Modal'
 import { ColorField } from './ui/ColorField'
 import { newId } from '../lib/ids'
@@ -10,15 +11,28 @@ const METHOD_LABELS: Record<ConnectionMethod, string> = {
   iam: 'Standard (TCP/IP) AWS IAM'
 }
 
+const ENGINE_LABELS: Record<DbEngine, string> = {
+  mysql: 'MySQL / MariaDB',
+  postgres: 'PostgreSQL'
+}
+
+/** Sensible default user for a fresh connection to each server. */
+const DEFAULT_USERS: Record<DbEngine, string> = {
+  mysql: 'root',
+  postgres: 'postgres'
+}
+
 function blankConnection(): ConnectionConfig {
   return {
     id: '',
     name: '',
     method: 'tcp',
+    engine: 'mysql',
     host: '127.0.0.1',
-    port: 3306,
-    user: 'root',
+    port: DEFAULT_PORTS.mysql,
+    user: DEFAULT_USERS.mysql,
     password: '',
+    database: '',
     defaultSchema: '',
     sshHost: '127.0.0.1',
     sshPort: 22,
@@ -46,52 +60,105 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
     ...(initial ?? {})
   }))
   const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [testResult, setTestResult] = useState<{
+    tone: 'ok' | 'error' | 'info'
+    message: string
+  } | null>(null)
   const [saving, setSaving] = useState(false)
+  /** Token of the test in flight, so a second click (or closing) can stop it. */
+  const testIdRef = useRef<string | null>(null)
+  const stoppingRef = useRef(false)
+
+  // A test left running would hold a worker — and its socket — open for as long
+  // as the connect attempt takes to time out.
+  useEffect(
+    () => () => {
+      if (testIdRef.current) void window.api.connections.testCancel(testIdRef.current)
+    },
+    []
+  )
+
+  const engine = engineOf(config)
+  const isPostgres = engine === 'postgres'
+  const serverName = isPostgres ? 'PostgreSQL' : 'MySQL'
 
   const patch = (next: Partial<ConnectionConfig>): void => {
     setConfig((current) => ({ ...current, ...next }))
     setTestResult(null)
   }
 
+  /**
+   * Switching engine carries over anything the user typed, but the port and
+   * username defaults only make sense per engine — so those move with it,
+   * unless they have been changed from the default already.
+   */
+  const switchEngine = (next: DbEngine): void => {
+    const previous = engineOf(config)
+    if (next === previous) return
+    patch({
+      engine: next,
+      port: config.port === DEFAULT_PORTS[previous] ? DEFAULT_PORTS[next] : config.port,
+      user: config.user === DEFAULT_USERS[previous] ? DEFAULT_USERS[next] : config.user
+    })
+  }
+
   const nameInvalid = config.name.trim() === ''
+  // Postgres binds a connection to one database and cannot cross to another.
+  const databaseInvalid = isPostgres && (config.database ?? '').trim() === ''
+
+  /** Fills in the fields the save/test paths both need to normalise. */
+  const normalised = (id: string): ConnectionConfig => ({
+    ...config,
+    id,
+    engine,
+    port: Number(config.port) || DEFAULT_PORTS[engine],
+    sshPort: Number(config.sshPort) || 22
+  })
 
   const save = async (): Promise<void> => {
-    if (nameInvalid || saving) return
+    if (nameInvalid || databaseInvalid || saving) return
     setSaving(true)
     try {
       const toSave: ConnectionConfig = {
-        ...config,
-        id: config.id || newId('conn'),
-        name: config.name.trim(),
-        port: Number(config.port) || 3306,
-        sshPort: Number(config.sshPort) || 22
+        ...normalised(config.id || newId('conn')),
+        name: config.name.trim()
       }
       onSaved(await window.api.connections.save(toSave))
     } catch (err) {
-      setTestResult({ ok: false, message: (err as Error).message })
+      setTestResult({ tone: 'error', message: (err as Error).message })
     } finally {
       setSaving(false)
     }
   }
 
+  /** Starts a test, or — clicked while one is running — stops it. */
   const test = async (): Promise<void> => {
+    if (testing) {
+      if (!testIdRef.current) return
+      stoppingRef.current = true
+      void window.api.connections.testCancel(testIdRef.current)
+      return
+    }
+
+    const testId = newId('test')
+    testIdRef.current = testId
+    stoppingRef.current = false
     setTesting(true)
     setTestResult(null)
     try {
-      const result = await window.api.connections.test({
-        ...config,
-        id: config.id || 'test',
-        port: Number(config.port) || 3306,
-        sshPort: Number(config.sshPort) || 22
-      })
+      const result = await window.api.connections.test(normalised(config.id || 'test'), testId)
       setTestResult({
-        ok: true,
-        message: `Connected to MySQL ${result.serverVersion} in ${result.latencyMs} ms.`
+        tone: 'ok',
+        message: `Connected to ${serverName} ${result.serverVersion} in ${result.latencyMs} ms.`
       })
     } catch (err) {
-      setTestResult({ ok: false, message: (err as Error).message })
+      setTestResult({
+        tone: stoppingRef.current ? 'info' : 'error',
+        message: (err as Error).message
+      })
     } finally {
+      testIdRef.current = null
+      stoppingRef.current = false
       setTesting(false)
     }
   }
@@ -110,29 +177,47 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
       onClose={onClose}
       footer={
         <>
-          <button className="btn" style={{ minWidth: 120 }} onClick={test} disabled={testing}>
-            {testing ? 'Testing…' : 'Test Connection'}
+          <button
+            className="btn"
+            style={{ minWidth: 120 }}
+            onClick={test}
+            title={testing ? 'Stop the connection test' : undefined}
+          >
+            {testing ? 'Stop Test' : 'Test Connection'}
           </button>
-          {testResult && (
-            <span
-              className="hint"
-              style={{
-                color: testResult.ok ? 'var(--ok)' : 'var(--error)',
-                maxWidth: 320,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap'
-              }}
-              title={testResult.message}
-            >
-              {testResult.message}
-            </span>
+          {testing ? (
+            <span className="hint">Testing…</span>
+          ) : (
+            testResult && (
+              <span
+                className="hint"
+                style={{
+                  color:
+                    testResult.tone === 'ok'
+                      ? 'var(--ok)'
+                      : testResult.tone === 'error'
+                        ? 'var(--error)'
+                        : undefined,
+                  maxWidth: 320,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}
+                title={testResult.message}
+              >
+                {testResult.message}
+              </span>
+            )
           )}
           <div className="spacer" />
           <button className="btn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn primary" onClick={save} disabled={nameInvalid || saving}>
+          <button
+            className="btn primary"
+            onClick={save}
+            disabled={nameInvalid || databaseInvalid || saving}
+          >
             OK
           </button>
         </>
@@ -147,6 +232,23 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
           onChange={(e) => patch({ name: e.target.value })}
         />
         <span className="hint">Type a name for the connection</span>
+
+        <label>Database Server:</label>
+        <select
+          className="field"
+          value={engine}
+          onChange={(e) => switchEngine(e.target.value as DbEngine)}
+        >
+          {(Object.keys(ENGINE_LABELS) as DbEngine[]).map((value) => (
+            <option key={value} value={value}>
+              {ENGINE_LABELS[value]}
+            </option>
+          ))}
+        </select>
+        <span className="hint">
+          Which server this connection talks to. Changing it also moves the default port and
+          username.
+        </span>
 
         <label>Connection Method:</label>
         <select
@@ -236,22 +338,22 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
               />
               <span className="hint">Only needed for an encrypted key file.</span>
 
-              <label>MySQL Hostname:</label>
+              <label>{serverName} Hostname:</label>
               <input
                 className="field"
                 value={config.host}
                 title={config.host || undefined}
                 onChange={(e) => patch({ host: e.target.value })}
               />
-              <span className="hint">MySQL server host relative to the SSH server.</span>
+              <span className="hint">{serverName} server host relative to the SSH server.</span>
 
-              <label>MySQL Server Port:</label>
+              <label>{serverName} Server Port:</label>
               <input
                 className="field"
                 value={config.port}
                 onChange={(e) => patch({ port: Number(e.target.value) || 0 })}
               />
-              <span className="hint">TCP/IP port of the MySQL server.</span>
+              <span className="hint">TCP/IP port of the {serverName} server.</span>
             </>
           )}
 
@@ -316,13 +418,34 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
             </>
           )}
 
+          {isPostgres && (
+            <>
+              <label>Database:</label>
+              <input
+                className={`field${databaseInvalid ? ' invalid' : ''}`}
+                placeholder="postgres"
+                value={config.database ?? ''}
+                onChange={(e) => patch({ database: e.target.value })}
+              />
+              <span className="hint">
+                PostgreSQL binds a connection to one database and cannot reach another without
+                reconnecting, so this is required. The tree then lists that database&apos;s schemas.
+              </span>
+            </>
+          )}
+
           <label>Default Schema:</label>
           <input
             className="field"
+            placeholder={isPostgres ? 'public' : undefined}
             value={config.defaultSchema ?? ''}
             onChange={(e) => patch({ defaultSchema: e.target.value })}
           />
-          <span className="hint">The schema to use as default schema. (Optional)</span>
+          <span className="hint">
+            {isPostgres
+              ? 'Schema to put first on the search_path, so unqualified names resolve there. (Optional)'
+              : 'The schema to use as default schema. (Optional)'}
+          </span>
 
           <label>Use SSL:</label>
           <div className="row" style={{ gap: 14 }}>
@@ -348,7 +471,7 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
           <span className="hint">
             {config.method === 'iam'
               ? 'Always on for AWS IAM - the token is only accepted over TLS. Leave verification off unless you have added the Amazon RDS CA to your machine.'
-              : 'Required by most managed MySQL services.'}
+              : `Required by most managed ${serverName} services.`}
           </span>
         </div>
       </fieldset>

@@ -1,51 +1,15 @@
 /**
- * SQL helpers shared by the renderer and the DB workers: identifier quoting,
- * literal escaping and statement splitting.
+ * SQL helpers shared by the renderer and the DB workers: statement splitting,
+ * classification and the statement builders behind the grid's copy actions.
+ *
+ * Anything that has to *write* an identifier or literal takes a `Dialect` —
+ * see `./dialect`.
  */
 
-import type { CellValue, ColumnMeta } from './types'
+import type { CellValue, ColumnMeta, DbEngine } from './types'
+import { escapeValue, qualify, type Dialect } from './dialect'
 
-export function quoteIdent(name: string): string {
-  return '`' + String(name).replace(/`/g, '``') + '`'
-}
-
-export function qualify(schema: string | null | undefined, table: string): string {
-  return schema ? `${quoteIdent(schema)}.${quoteIdent(table)}` : quoteIdent(table)
-}
-
-/** Escapes a value into a MySQL literal. Mirrors mysql2's escaping rules. */
-export function escapeValue(value: CellValue | undefined, numeric = false): string {
-  if (value === null || value === undefined) return 'NULL'
-  if (typeof value === 'boolean') return value ? '1' : '0'
-  if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL'
-  if (numeric && value !== '' && !Number.isNaN(Number(value))) return String(Number(value))
-  return `'${escapeString(value)}'`
-}
-
-export function escapeString(value: string): string {
-  return value.replace(/[\0\b\t\n\r\x1a"'\\]/g, (ch) => {
-    switch (ch) {
-      case '\0':
-        return '\\0'
-      case '\b':
-        return '\\b'
-      case '\t':
-        return '\\t'
-      case '\n':
-        return '\\n'
-      case '\r':
-        return '\\r'
-      case '\x1a':
-        return '\\Z'
-      case '"':
-        return '\\"'
-      case "'":
-        return "\\'"
-      default:
-        return '\\\\'
-    }
-  })
-}
+export { escapeValue, qualify } from './dialect'
 
 export interface Statement {
   text: string
@@ -55,12 +19,20 @@ export interface Statement {
   end: number
 }
 
+/** Matches the opening of a Postgres dollar-quoted body: `$$` or `$tag$`. */
+const DOLLAR_QUOTE = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/
+
 /**
  * Splits a script into statements on `;`, ignoring delimiters that appear
- * inside string literals, backtick identifiers or comments.
+ * inside string literals, quoted identifiers or comments.
+ *
+ * The engine matters here. Postgres bodies are wrapped in `$$ … $$`, which is
+ * where a `CREATE FUNCTION` keeps its semicolons, and it has no backslash
+ * escapes inside ordinary literals; MySQL has `#` comments and backticks.
  */
-export function splitStatements(sql: string): Statement[] {
+export function splitStatements(sql: string, engine: DbEngine = 'mysql'): Statement[] {
   const out: Statement[] = []
+  const isPg = engine === 'postgres'
   let start = 0
   let i = 0
 
@@ -77,11 +49,27 @@ export function splitStatements(sql: string): Statement[] {
     const ch = sql[i]
     const next = sql[i + 1]
 
-    if (ch === "'" || ch === '"' || ch === '`') {
+    if (isPg && ch === '$') {
+      const tag = DOLLAR_QUOTE.exec(sql.slice(i))
+      if (tag) {
+        const closing = tag[0]
+        const end = sql.indexOf(closing, i + closing.length)
+        // An unterminated body runs to the end of the script rather than
+        // spilling its semicolons back into the splitter.
+        i = end < 0 ? sql.length : end + closing.length
+        continue
+      }
+    }
+
+    if (ch === "'" || ch === '"' || (!isPg && ch === '`')) {
       const quote = ch
+      // Backslash is only an escape inside a MySQL literal; Postgres reserves
+      // that for the E'' form, which this treats as a plain literal — the
+      // doubled-quote rule below still terminates it correctly.
+      const backslashEscapes = !isPg && quote !== '`'
       i++
       while (i < sql.length) {
-        if (sql[i] === '\\' && quote !== '`') {
+        if (sql[i] === '\\' && backslashEscapes) {
           i += 2
           continue
         }
@@ -104,15 +92,26 @@ export function splitStatements(sql: string): Statement[] {
       continue
     }
 
-    if (ch === '#') {
+    if (!isPg && ch === '#') {
       while (i < sql.length && sql[i] !== '\n') i++
       continue
     }
 
     if (ch === '/' && next === '*') {
       i += 2
-      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++
-      i += 2
+      // Postgres nests block comments; MySQL does not.
+      let depth = 1
+      while (i < sql.length && depth > 0) {
+        if (sql[i] === '*' && sql[i + 1] === '/') {
+          depth--
+          i += 2
+        } else if (isPg && sql[i] === '/' && sql[i + 1] === '*') {
+          depth++
+          i += 2
+        } else {
+          i++
+        }
+      }
       continue
     }
 
@@ -131,8 +130,8 @@ export function splitStatements(sql: string): Statement[] {
 }
 
 /** Returns the statement containing `offset`, preferring the one just before the caret. */
-export function statementAt(sql: string, offset: number): Statement | null {
-  const statements = splitStatements(sql)
+export function statementAt(sql: string, offset: number, engine: DbEngine = 'mysql'): Statement | null {
+  const statements = splitStatements(sql, engine)
   if (statements.length === 0) return null
   for (const st of statements) {
     // `<= end + 1` so a caret sitting right after the trailing `;` still matches.
@@ -193,8 +192,8 @@ export function isReadOnlyStatement(sql: string): boolean {
 }
 
 /** True when any statement in the script would modify data or schema. */
-export function hasModifyingStatement(sql: string): boolean {
-  return splitStatements(sql).some((s) => !isReadOnlyStatement(s.text))
+export function hasModifyingStatement(sql: string, engine: DbEngine = 'mysql'): boolean {
+  return splitStatements(sql, engine).some((s) => !isReadOnlyStatement(s.text))
 }
 
 export function stripComments(sql: string): string {
@@ -211,10 +210,10 @@ export function stripComments(sql: string): string {
 export function guessTableName(sql: string): string | null {
   const cleaned = stripComments(sql)
   const re =
-    /\b(?:FROM|JOIN|INTO|UPDATE|TABLE|DATABASE|SCHEMA)\s+((?:`[^`]+`|[A-Za-z0-9_$]+)(?:\s*\.\s*(?:`[^`]+`|[A-Za-z0-9_$]+))?)/i
+    /\b(?:FROM|JOIN|INTO|UPDATE|TABLE|DATABASE|SCHEMA)\s+((?:`[^`]+`|"[^"]+"|[A-Za-z0-9_$]+)(?:\s*\.\s*(?:`[^`]+`|"[^"]+"|[A-Za-z0-9_$]+))?)/i
   const m = re.exec(cleaned)
   if (!m) return null
-  const parts = m[1].split('.').map((p) => p.trim().replace(/^`|`$/g, ''))
+  const parts = m[1].split('.').map((p) => p.trim().replace(/^[`"]|[`"]$/g, ''))
   return parts[parts.length - 1] || null
 }
 
@@ -225,7 +224,7 @@ export interface TableRef {
   alias: string | null
 }
 
-const IDENT_AT_START = /^(?:`([^`]+)`|([A-Za-z0-9_$]+))/
+const IDENT_AT_START = /^(?:`([^`]+)`|"([^"]+)"|([A-Za-z0-9_$]+))/
 
 /** Clause introducers that are followed by a comma-separated list of tables. */
 const TABLE_CLAUSE = /\b(?:FROM|JOIN|INTO|UPDATE)\b/gi
@@ -245,7 +244,7 @@ const NOT_AN_ALIAS = new Set([
 function readIdent(text: string, pos: number): { name: string; end: number } | null {
   const m = IDENT_AT_START.exec(text.slice(pos))
   if (!m) return null
-  return { name: m[1] ?? m[2], end: pos + m[0].length }
+  return { name: m[1] ?? m[2] ?? m[3], end: pos + m[0].length }
 }
 
 function skipSpace(text: string, pos: number): number {
@@ -323,48 +322,54 @@ export function isNumericColumn(col: ColumnMeta): boolean {
 }
 
 /** `'a', 'b', 3` — the "Copy Row Values" format. */
-export function rowValuesText(row: CellValue[], columns: ColumnMeta[]): string {
-  return row.map((v, i) => escapeValue(v, columns[i]?.isNumeric ?? false)).join(', ')
+export function rowValuesText(d: Dialect, row: CellValue[], columns: ColumnMeta[]): string {
+  return row.map((v, i) => escapeValue(d, v, columns[i]?.isNumeric ?? false)).join(', ')
 }
 
-export function columnNamesText(columns: ColumnMeta[]): string {
-  return columns.map((c) => quoteIdent(c.name)).join(', ')
+export function columnNamesText(d: Dialect, columns: ColumnMeta[]): string {
+  return columns.map((c) => d.quoteIdent(c.name)).join(', ')
 }
 
 export function buildInsert(
+  d: Dialect,
   schema: string | null,
   table: string,
   columns: ColumnMeta[],
   rows: CellValue[][]
 ): string {
-  const cols = columns.map((c) => quoteIdent(c.orgName || c.name)).join(', ')
+  const cols = columns.map((c) => d.quoteIdent(c.orgName || c.name)).join(', ')
   const values = rows
-    .map((row) => `(${row.map((v, i) => escapeValue(v, columns[i]?.isNumeric ?? false)).join(', ')})`)
+    .map(
+      (row) => `(${row.map((v, i) => escapeValue(d, v, columns[i]?.isNumeric ?? false)).join(', ')})`
+    )
     .join(',\n  ')
-  return `INSERT INTO ${qualify(schema, table)} (${cols})\nVALUES\n  ${values};`
+  return `INSERT INTO ${qualify(d, schema, table)} (${cols})\nVALUES\n  ${values};`
 }
 
 /**
  * `INSERT ... SET` form. The SET syntax takes a single row, so each row becomes
- * its own statement.
+ * its own statement. MySQL-only syntax, so Postgres gets the standard form.
  */
 export function buildInsertSet(
+  d: Dialect,
   schema: string | null,
   table: string,
   columns: ColumnMeta[],
   rows: CellValue[][]
 ): string {
+  if (d.engine !== 'mysql') return buildInsert(d, schema, table, columns, rows)
   return rows
     .map((row) => {
       const sets = columns
-        .map((c, i) => `${quoteIdent(c.orgName || c.name)} = ${escapeValue(row[i], c.isNumeric)}`)
+        .map((c, i) => `${d.quoteIdent(c.orgName || c.name)} = ${escapeValue(d, row[i], c.isNumeric)}`)
         .join(',\n    ')
-      return `INSERT INTO ${qualify(schema, table)}\nSET\n    ${sets};`
+      return `INSERT INTO ${qualify(d, schema, table)}\nSET\n    ${sets};`
     })
     .join('\n\n')
 }
 
 export function buildUpdate(
+  d: Dialect,
   schema: string | null,
   table: string,
   columns: ColumnMeta[],
@@ -372,13 +377,14 @@ export function buildUpdate(
   keyIndexes: number[]
 ): string {
   const sets = columns
-    .map((c, i) => `${quoteIdent(c.orgName || c.name)} = ${escapeValue(row[i], c.isNumeric)}`)
+    .map((c, i) => `${d.quoteIdent(c.orgName || c.name)} = ${escapeValue(d, row[i], c.isNumeric)}`)
     .join(',\n    ')
-  const where = whereClause(columns, row, keyIndexes)
-  return `UPDATE ${qualify(schema, table)}\nSET\n    ${sets}\nWHERE ${where};`
+  const where = whereClause(d, columns, row, keyIndexes)
+  return `UPDATE ${qualify(d, schema, table)}\nSET\n    ${sets}\nWHERE ${where};`
 }
 
 export function whereClause(
+  d: Dialect,
   columns: ColumnMeta[],
   row: CellValue[],
   keyIndexes: number[]
@@ -388,8 +394,8 @@ export function whereClause(
     .map((i) => {
       const c = columns[i]
       const v = row[i]
-      const name = quoteIdent(c.orgName || c.name)
-      return v === null ? `${name} IS NULL` : `${name} = ${escapeValue(v, c.isNumeric)}`
+      const name = d.quoteIdent(c.orgName || c.name)
+      return v === null ? `${name} IS NULL` : `${name} = ${escapeValue(d, v, c.isNumeric)}`
     })
     .join(' AND ')
 }

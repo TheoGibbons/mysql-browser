@@ -2,14 +2,14 @@
 
 /** Preset swatches offered in the connection dialog. Red is first for prod. */
 export const CONNECTION_COLORS: { name: string; value: string }[] = [
-  { name: 'Production (red)', value: '#c0392b' },
-  { name: 'Orange', value: '#d35400' },
-  { name: 'Amber', value: '#c79000' },
-  { name: 'Green', value: '#2e7d46' },
-  { name: 'Teal', value: '#12766b' },
-  { name: 'Blue', value: '#2a6fc9' },
-  { name: 'Purple', value: '#7a3e9d' },
-  { name: 'Grey', value: '#5a636b' }
+  { name: 'Red', value: '#FF0000' },
+  { name: 'Blue', value: '#0000FF' },
+  { name: 'Orange', value: '#FFA500' },
+  { name: 'Yellow', value: '#FFFF00' },
+  { name: 'Green', value: '#008000' },
+  { name: 'Magenta', value: '#FF00FF' },
+  { name: 'Purple', value: '#800080' },
+  { name: 'Grey', value: '#808080' }
 ]
 
 interface Rgb {

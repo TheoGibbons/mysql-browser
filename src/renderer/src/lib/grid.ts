@@ -7,7 +7,8 @@
  */
 
 import type { CellValue, ColumnMeta, ResultSet } from '@shared/types'
-import { buildInsert, buildInsertSet, escapeValue, qualify, quoteIdent, whereClause } from '@shared/sql'
+import { buildInsert, buildInsertSet, whereClause } from '@shared/sql'
+import { escapeValue, qualify, type Dialect } from '@shared/dialect'
 
 /** `>= 0` indexes a base row; `< 0` indexes an added row as `-1 - n`. */
 export type RowRef = number
@@ -139,7 +140,7 @@ export interface ApplyPlan {
   blockedReason: string | null
 }
 
-export function buildApplyPlan(result: ResultSet, state: GridState): ApplyPlan {
+export function buildApplyPlan(d: Dialect, result: ResultSet, state: GridState): ApplyPlan {
   if (!result.editTable) {
     return {
       sql: '',
@@ -176,21 +177,21 @@ export function buildApplyPlan(result: ResultSet, state: GridState): ApplyPlan {
       .map((col) => {
         const meta = columns[col]
         const value = state.edits[editKey(row, col)]
-        return `${quoteIdent(meta.orgName || meta.name)} = ${escapeValue(value, meta.isNumeric)}`
+        return `${d.quoteIdent(meta.orgName || meta.name)} = ${escapeValue(d, value, meta.isNumeric)}`
       })
       .join(', ')
     // WHERE uses the *original* row so the key still matches even if it was edited.
-    const where = whereClause(columns, result.rows[row], keyColumns)
-    statements.push(`UPDATE ${qualify(editSchema, editTable)}\nSET ${sets}\nWHERE ${where};`)
+    const where = whereClause(d, columns, result.rows[row], keyColumns)
+    statements.push(`UPDATE ${qualify(d, editSchema, editTable)}\nSET ${sets}\nWHERE ${where};`)
   }
 
   for (const row of Object.keys(state.deleted).map(Number).sort((a, b) => a - b)) {
-    const where = whereClause(columns, result.rows[row], keyColumns)
-    statements.push(`DELETE FROM ${qualify(editSchema, editTable)}\nWHERE ${where};`)
+    const where = whereClause(d, columns, result.rows[row], keyColumns)
+    statements.push(`DELETE FROM ${qualify(d, editSchema, editTable)}\nWHERE ${where};`)
   }
 
   if (state.added.length > 0) {
-    statements.push(buildInsert(editSchema, editTable, columns, state.added))
+    statements.push(buildInsert(d, editSchema, editTable, columns, state.added))
   }
 
   return {
@@ -205,6 +206,7 @@ export function buildApplyPlan(result: ResultSet, state: GridState): ApplyPlan {
 // ---------------------------------------------------------------------------
 
 export function rowsToValuesText(
+  d: Dialect,
   result: ResultSet,
   state: GridState,
   refs: RowRef[]
@@ -212,43 +214,60 @@ export function rowsToValuesText(
   return refs
     .map((ref) =>
       result.columns
-        .map((c, i) => escapeValue(cellValue(result, state, ref, i), c.isNumeric))
+        .map((c, i) => escapeValue(d, cellValue(result, state, ref, i), c.isNumeric))
         .join(', ')
     )
     .join('\r\n')
 }
 
 export function rowsWithNamesText(
+  d: Dialect,
   result: ResultSet,
   state: GridState,
   refs: RowRef[]
 ): string {
-  const header = result.columns.map((c) => quoteIdent(c.name)).join(', ')
-  return `${header}\r\n${rowsToValuesText(result, state, refs)}`
+  const header = result.columns.map((c) => d.quoteIdent(c.name)).join(', ')
+  return `${header}\r\n${rowsToValuesText(d, result, state, refs)}`
 }
 
-export function rowsToInsert(result: ResultSet, state: GridState, refs: RowRef[]): string {
+export function rowsToInsert(
+  d: Dialect,
+  result: ResultSet,
+  state: GridState,
+  refs: RowRef[]
+): string {
   const table = result.editTable ?? 'table_name'
   const rows = refs.map((ref) => result.columns.map((_, i) => cellValue(result, state, ref, i)))
-  return buildInsert(result.editSchema, table, result.columns, rows)
+  return buildInsert(d, result.editSchema, table, result.columns, rows)
 }
 
-export function rowsToInsertSet(result: ResultSet, state: GridState, refs: RowRef[]): string {
+export function rowsToInsertSet(
+  d: Dialect,
+  result: ResultSet,
+  state: GridState,
+  refs: RowRef[]
+): string {
   const table = result.editTable ?? 'table_name'
   const rows = refs.map((ref) => result.columns.map((_, i) => cellValue(result, state, ref, i)))
-  return buildInsertSet(result.editSchema, table, result.columns, rows)
+  return buildInsertSet(d, result.editSchema, table, result.columns, rows)
 }
 
-export function rowsToUpdate(result: ResultSet, state: GridState, refs: RowRef[]): string {
+export function rowsToUpdate(
+  d: Dialect,
+  result: ResultSet,
+  state: GridState,
+  refs: RowRef[]
+): string {
   const table = result.editTable ?? 'table_name'
   const keys = result.keyColumns.length > 0 ? result.keyColumns : [0]
   return refs
     .map((ref) => {
       const row = result.columns.map((_, i) => cellValue(result, state, ref, i))
       const sets = result.columns
-        .map((c, i) => `${quoteIdent(c.orgName || c.name)} = ${escapeValue(row[i], c.isNumeric)}`)
+        .map((c, i) => `${d.quoteIdent(c.orgName || c.name)} = ${escapeValue(d, row[i], c.isNumeric)}`)
         .join(', ')
-      return `UPDATE ${qualify(result.editSchema, table)}\nSET ${sets}\nWHERE ${whereClause(
+      return `UPDATE ${qualify(d, result.editSchema, table)}\nSET ${sets}\nWHERE ${whereClause(
+        d,
         result.columns,
         row,
         keys
@@ -372,12 +391,17 @@ export function toTsv(result: ResultSet, state: GridState, refs: RowRef[]): stri
   return `${header}\r\n${body}\r\n`
 }
 
-export function toSqlInserts(result: ResultSet, state: GridState, refs: RowRef[]): string {
+export function toSqlInserts(
+  d: Dialect,
+  result: ResultSet,
+  state: GridState,
+  refs: RowRef[]
+): string {
   const table = result.editTable ?? 'table_name'
   return refs
     .map((ref) => {
       const row = result.columns.map((_, i) => cellValue(result, state, ref, i))
-      return buildInsert(result.editSchema, table, result.columns, [row])
+      return buildInsert(d, result.editSchema, table, result.columns, [row])
     })
     .join('\n')
 }
