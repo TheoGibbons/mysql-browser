@@ -4,6 +4,7 @@ import { ContextMenuProvider, useContextMenu } from './components/ui/ContextMenu
 import { HomePage } from './components/HomePage'
 import { ConnectionView } from './components/ConnectionView'
 import { BrowserNotice } from './components/BrowserNotice'
+import { UpdateChip } from './components/UpdateChip'
 import { HomeIcon } from './components/ui/Icons'
 import { isValidHex, tint } from './lib/color'
 
@@ -126,6 +127,7 @@ function Shell(): JSX.Element {
       </div>
 
       {active ? <ConnectionView key={active.sessionId} conn={active} /> : <HomePage />}
+      <UpdateChip />
     </div>
   )
 }

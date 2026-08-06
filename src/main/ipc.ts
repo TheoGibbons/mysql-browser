@@ -11,6 +11,7 @@ import type {
 } from '@shared/types'
 import { Session, testConnection } from './db/session'
 import * as store from './store'
+import { check, getUpdateState, installNow } from './updater'
 
 /** Live sessions, keyed by connection *tab* id — several may share a connectionId. */
 const sessions = new Map<string, Session>()
@@ -244,6 +245,10 @@ export function registerIpc(): void {
   handle('shell:showItem', (filePath: string) => {
     shell.showItemInFolder(filePath)
   })
+
+  handle('updates:get', () => getUpdateState())
+  handle('updates:check', () => check())
+  handle('updates:install', () => installNow())
 }
 
 /** Closes every worker on shutdown so no MySQL sockets are left dangling. */

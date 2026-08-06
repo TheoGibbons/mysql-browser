@@ -2,6 +2,7 @@ import path from 'node:path'
 import { app, BrowserWindow, Menu, shell } from 'electron'
 import { registerIpc, shutdownSessions } from './ipc'
 import { initStore } from './store'
+import { initUpdater } from './updater'
 
 const isDev = !app.isPackaged
 
@@ -14,6 +15,10 @@ function createWindow(): BrowserWindow {
     show: false,
     backgroundColor: '#f0f0f0',
     title: 'MySQL Browser',
+    // Packaged builds take the icon from the exe, but dev runs would otherwise
+    // show the stock Electron one. `resources/` sits two levels up from
+    // out/main in both cases.
+    icon: path.join(__dirname, '../../resources/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -82,6 +87,7 @@ if (!app.requestSingleInstanceLock()) {
     const win = createWindow()
     win.setMenuBarVisibility(false)
     buildMenu()
+    initUpdater()
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()

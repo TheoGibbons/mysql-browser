@@ -11,7 +11,8 @@ import type {
   SessionMeta,
   SessionStatus,
   SessionStatusEvent,
-  TableDefinition
+  TableDefinition,
+  UpdateState
 } from '@shared/types'
 
 /** Unwraps the IPC envelope, rethrowing failures as ordinary errors. */
@@ -146,6 +147,15 @@ const api = {
     write: (filePath: string, contents: string) => call<void>('shell:writeFile', filePath, contents),
     read: (filePath: string) => call<string>('shell:readFile', filePath),
     reveal: (filePath: string) => call<void>('shell:showItem', filePath)
+  },
+
+  updates: {
+    get: () => call<UpdateState>('updates:get'),
+    check: () => call<UpdateState>('updates:check'),
+    /** Quits and relaunches into the staged version. False if none is staged. */
+    install: () => call<boolean>('updates:install'),
+    onState: (handler: (state: UpdateState) => void) =>
+      subscribe<UpdateState>('updates:state', handler)
   }
 }
 

@@ -1829,3 +1829,62 @@ table.editgrid input[type='checkbox'] {
   color: var(--text-dim) !important;
   margin-bottom: 0 !important;
 }
+
+/* Background-update chip, bottom-right above everything else. */
+.update-chip {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 460px;
+  padding: 6px 8px 6px 10px;
+  font-size: var(--fs);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--text-dim);
+  border-radius: 3px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+.update-chip.ready {
+  border-left-color: var(--accent);
+}
+
+.update-chip-label {
+  color: var(--text);
+}
+
+.update-chip-action {
+  flex: none;
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  background: var(--bg-toolbar);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.update-chip-action:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.update-chip-close {
+  flex: none;
+  padding: 0 3px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.update-chip-close:hover {
+  color: var(--text);
+}

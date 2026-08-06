@@ -417,6 +417,21 @@ export interface SessionStatusEvent {
   serverVersion?: string
 }
 
+// ---------------------------------------------------------------------------
+// Updates
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the background updater has got to. `ready` means a new version is
+ * staged and will be applied the next time the app closes.
+ */
+export type UpdateState =
+  | { phase: 'idle' }
+  | { phase: 'checking' }
+  | { phase: 'downloading'; version: string; percent: number }
+  | { phase: 'ready'; version: string }
+  | { phase: 'error'; message: string }
+
 export interface IpcError {
   message: string
   code?: string

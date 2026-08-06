@@ -10,10 +10,13 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "icon": "electron scripts/build-icon.cjs",
     "dist": "electron-vite build && electron-builder --win --dir",
-    "dist:installer": "electron-vite build && electron-builder --win"
+    "dist:installer": "electron-vite build && electron-builder --win",
+    "release": "electron-vite build && electron-builder --win --publish always"
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "mysql2": "^3.11.5",
     "pg": "^8.22.0",
     "ssh2": "^1.16.0"
@@ -51,12 +54,28 @@
     },
     "files": [
       "out/**/*",
-      "resources/**/*"
+      "resources/**/*",
+      "!node_modules/cpu-features/**",
+      "!node_modules/nan/**"
     ],
+    "npmRebuild": false,
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "MySQL Browser"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "SET-YOUR-GITHUB-USERNAME",
+      "repo": "mysql-browser"
     }
   },
   "allowScripts": {

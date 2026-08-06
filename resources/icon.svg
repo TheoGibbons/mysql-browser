@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4b8fe6"/>
+      <stop offset="1" stop-color="#1d5099"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="256" height="256" rx="52" fill="url(#tile)"/>
+
+  <!--
+    A database cylinder, drawn bold and with only two bands so it stays legible
+    when Windows renders the icon at 16px in the taskbar and title bar.
+  -->
+  <g fill="none" stroke="#ffffff" stroke-width="13" stroke-linecap="round">
+    <path d="M70 78 L70 178" />
+    <path d="M186 78 L186 178" />
+    <path d="M70 178 A58 22 0 0 0 186 178" />
+    <path d="M70 122 A58 22 0 0 0 186 122" />
+  </g>
+  <ellipse cx="128" cy="78" rx="58" ry="22" fill="#ffffff"/>
+</svg>
