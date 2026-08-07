@@ -5,6 +5,7 @@ interface Props {
   connectionName: string
   onCancel(): void
   onConfirm(): void
+  confirmLabel?: string
 }
 
 /**
@@ -12,7 +13,13 @@ interface Props {
  * runs on a connection flagged "confirm on modifying query". Cancel is focused
  * so Enter is safe; the run button is the scary one.
  */
-export function ConfirmModifyModal({ sql, connectionName, onCancel, onConfirm }: Props): JSX.Element {
+export function ConfirmModifyModal({
+  sql,
+  connectionName,
+  onCancel,
+  onConfirm,
+  confirmLabel = 'Run modifying query'
+}: Props): JSX.Element {
   const cancelRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -43,7 +50,7 @@ export function ConfirmModifyModal({ sql, connectionName, onCancel, onConfirm }:
             Cancel
           </button>
           <button className="btn danger" onClick={onConfirm}>
-            Run modifying query
+            {confirmLabel}
           </button>
         </div>
       </div>

@@ -198,6 +198,11 @@ export function ResultsGrid({
     [update]
   )
 
+  const addRow = useCallback(() => {
+    const row: CellValue[] = Array(result.columns.length).fill(null)
+    update((current) => ({ ...current, added: [...current.added, row] }))
+  }, [result.columns.length, update])
+
   const pasteRows = useCallback(async () => {
     const text = await window.api.clipboard.read()
     const rows = parsePastedRows(text, result.columns.length)
@@ -274,6 +279,11 @@ export function ResultsGrid({
             onSelect: () => col !== null && copy(displayValue(cellValue(result, state, ref, col)))
           }
         ]
+      },
+      {
+        label: 'Add Row',
+        disabled: !editable,
+        onSelect: addRow
       },
       {
         label: 'Paste Row',

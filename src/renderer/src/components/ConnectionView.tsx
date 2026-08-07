@@ -68,7 +68,10 @@ export function ConnectionView({ conn }: Props): JSX.Element {
     busy: boolean
     error: string | null
   } | null>(null)
-  const [pendingModify, setPendingModify] = useState<{ sql: string } | null>(null)
+  const [pendingModify, setPendingModify] = useState<{
+    sql: string
+    source: 'query' | 'grid'
+  } | null>(null)
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
   const isRunning = activeTabId ? !!running[activeTabId] : false
@@ -131,7 +134,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
       // EXPLAIN never modifies; otherwise, gate modifying SQL behind the loud
       // confirmation when the connection opts in.
       if (mode !== 'explain' && conn.config.confirmModifying && hasModifyingStatement(sql, engine)) {
-        setPendingModify({ sql })
+        setPendingModify({ sql, source: 'query' })
         return
       }
       runResolved(sql, mode === 'explain')
@@ -214,7 +217,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
     setApplyState({ sql: plan.sql, count: plan.statementCount, busy: false, error: null })
   }
 
-  const confirmApply = async (): Promise<void> => {
+  const applyChanges = async (): Promise<void> => {
     if (!applyState || !activeTabId) return
     setApplyState({ ...applyState, busy: true, error: null })
     try {
@@ -232,6 +235,15 @@ export function ConnectionView({ conn }: Props): JSX.Element {
         current ? { ...current, busy: false, error: (err as Error).message } : current
       )
     }
+  }
+
+  const confirmApply = (): void => {
+    if (!applyState) return
+    if (conn.config.confirmModifying) {
+      setPendingModify({ sql: applyState.sql, source: 'grid' })
+      return
+    }
+    void applyChanges()
   }
 
   const exportResults = (event: React.MouseEvent): void => {
@@ -412,14 +424,14 @@ export function ConnectionView({ conn }: Props): JSX.Element {
         <PreferencesDialog connection={conn.config} onClose={() => setShowPrefs(false)} />
       )}
 
-      {applyState && (
+      {applyState && !pendingModify && (
         <ApplyChangesModal
           sql={applyState.sql}
           statementCount={applyState.count}
           busy={applyState.busy}
           error={applyState.error}
           onCancel={() => setApplyState(null)}
-          onConfirm={() => void confirmApply()}
+          onConfirm={confirmApply}
         />
       )}
 
@@ -427,11 +439,13 @@ export function ConnectionView({ conn }: Props): JSX.Element {
         <ConfirmModifyModal
           sql={pendingModify.sql}
           connectionName={conn.name}
+          confirmLabel={pendingModify.source === 'grid' ? 'Apply changes' : undefined}
           onCancel={() => setPendingModify(null)}
           onConfirm={() => {
-            const sql = pendingModify.sql
+            const pending = pendingModify
             setPendingModify(null)
-            runResolved(sql, false)
+            if (pending.source === 'grid') void applyChanges()
+            else runResolved(pending.sql, false)
           }}
         />
       )}
