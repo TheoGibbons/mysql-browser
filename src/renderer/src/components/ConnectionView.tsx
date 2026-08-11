@@ -14,6 +14,7 @@ import { HistoryView } from './HistoryView'
 import { TableDesigner } from './TableDesigner'
 import { ExportImportTab } from './ExportImportTab'
 import { ApplyChangesModal } from './ApplyChangesModal'
+import { BusyOverlay } from './ui/BusyOverlay'
 import { ConfirmModifyModal } from './ConfirmModifyModal'
 import { PreferencesDialog } from './PreferencesDialog'
 import { Splitter } from './ui/Splitter'
@@ -424,16 +425,17 @@ export function ConnectionView({ conn }: Props): JSX.Element {
         <PreferencesDialog connection={conn.config} onClose={() => setShowPrefs(false)} />
       )}
 
-      {applyState && !pendingModify && (
+      {applyState && !pendingModify && !applyState.busy && (
         <ApplyChangesModal
           sql={applyState.sql}
           statementCount={applyState.count}
-          busy={applyState.busy}
           error={applyState.error}
           onCancel={() => setApplyState(null)}
           onConfirm={confirmApply}
         />
       )}
+
+      {applyState?.busy && <BusyOverlay label="Applying changes…" />}
 
       {pendingModify && (
         <ConfirmModifyModal

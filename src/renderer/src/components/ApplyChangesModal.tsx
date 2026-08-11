@@ -6,7 +6,6 @@ interface Props {
   statementCount: number
   onCancel(): void
   onConfirm(): void
-  busy?: boolean
   error?: string | null
 }
 
@@ -19,7 +18,6 @@ export function ApplyChangesModal({
   statementCount,
   onCancel,
   onConfirm,
-  busy = false,
   error
 }: Props): JSX.Element {
   const [copied, setCopied] = useState(false)
@@ -46,11 +44,11 @@ export function ApplyChangesModal({
             </span>
           )}
           <div className="spacer" />
-          <button className="btn" onClick={onCancel} disabled={busy}>
+          <button className="btn" onClick={onCancel}>
             Cancel
           </button>
-          <button className="btn primary" onClick={onConfirm} disabled={busy}>
-            {busy ? 'Applying…' : 'OK'}
+          <button className="btn primary" onClick={onConfirm}>
+            OK
           </button>
         </>
       }
