@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import type { ReactNode } from 'react'
+import { useDialogDrag } from './useDialogDrag'
 
 interface ModalProps {
   title: string
@@ -21,6 +22,8 @@ export function Modal({
   footer,
   onSubmit
 }: ModalProps): JSX.Element {
+  const drag = useDialogDrag()
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
@@ -38,8 +41,15 @@ export function Modal({
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ width, height }} onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal-title">{title}</div>
+      <div
+        ref={drag.ref}
+        className="modal"
+        style={{ width, height, ...drag.style }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="modal-title drag-handle" {...drag.handleProps}>
+          {title}
+        </div>
         <div className="modal-body">{children}</div>
         {footer && <div className="modal-footer">{footer}</div>}
       </div>

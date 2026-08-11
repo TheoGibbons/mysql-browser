@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { useDialogDrag } from './ui/useDialogDrag'
 
 interface Props {
   sql: string
@@ -21,6 +22,7 @@ export function ConfirmModifyModal({
   confirmLabel = 'Run modifying query'
 }: Props): JSX.Element {
   const cancelRef = useRef<HTMLButtonElement>(null)
+  const drag = useDialogDrag()
 
   useEffect(() => {
     cancelRef.current?.focus()
@@ -36,8 +38,15 @@ export function ConfirmModifyModal({
 
   return (
     <div className="modal-backdrop danger-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onCancel()}>
-      <div className="modal danger-modal" style={{ width: 640 }} onMouseDown={(e) => e.stopPropagation()}>
-        <div className="danger-title">⚠ Modifying query on {connectionName}</div>
+      <div
+        ref={drag.ref}
+        className="modal danger-modal"
+        style={{ width: 640, ...drag.style }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="danger-title drag-handle" {...drag.handleProps}>
+          ⚠ Modifying query on {connectionName}
+        </div>
         <div className="modal-body">
           <p style={{ margin: '0 0 8px', fontWeight: 600, color: '#8c1010' }}>
             This will change data or schema on this connection. Read it carefully before running.

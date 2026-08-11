@@ -868,6 +868,12 @@ table.grid td.filler {
   border-radius: 4px 4px 0 0;
 }
 
+/* Title bars double as drag handles; double-click recentres the dialog. */
+.drag-handle {
+  cursor: move;
+  user-select: none;
+}
+
 .modal-body {
   padding: 10px 12px;
   overflow: auto;
