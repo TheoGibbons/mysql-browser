@@ -4,7 +4,17 @@ import type { DesignerState, QueryTabState } from '@shared/types'
 import { hasModifyingStatement, statementAt } from '@shared/sql'
 import { dialectFor } from '@shared/dialect'
 import { gridKey, useAppStore, useGridStore, type ConnTab, type NewTabOptions } from '../store'
-import { buildApplyPlan, isDirty, toCsv, toJson, toSqlInserts, toTsv, visibleRefs } from '../lib/grid'
+import {
+  buildApplyPlan,
+  emptyGridState,
+  isDirty,
+  toCsv,
+  toJson,
+  toSqlInserts,
+  toTsv,
+  visibleRefs,
+  type GridState
+} from '../lib/grid'
 import { isValidHex, tint } from '../lib/color'
 import { SchemaTree } from './SchemaTree'
 import { QueryTabsBar } from './QueryTabsBar'
@@ -77,7 +87,9 @@ export function ConnectionView({ conn }: Props): JSX.Element {
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
   const isRunning = activeTabId ? !!running[activeTabId] : false
   const key = activeTabId ? gridKey(sessionId, activeTabId) : ''
-  const grid = gridStates[key]
+  // A tab restored from disk has saved results but no grid state until it is
+  // touched, so fall back to an empty state rather than leaving `grid` undefined.
+  const grid = gridStates[key] ?? EMPTY_GRID
   const result = activeTab?.result ?? null
 
   const openTab = useCallback(
@@ -205,11 +217,11 @@ export function ConnectionView({ conn }: Props): JSX.Element {
 
   // --- apply / revert -----------------------------------------------------
 
-  const dirty = grid ? isDirty(grid) : false
+  const dirty = isDirty(grid)
   const canEdit = Boolean(result?.editTable && (result?.keyColumns.length ?? 0) > 0)
 
   const openApplyModal = (): void => {
-    if (!result || !grid) return
+    if (!result) return
     const plan = buildApplyPlan(d, result, grid)
     if (plan.blockedReason) {
       window.alert(plan.blockedReason)
@@ -248,7 +260,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
   }
 
   const exportResults = (event: React.MouseEvent): void => {
-    if (!result || !grid) return
+    if (!result) return
     const refs = grid.selection.length > 0 ? grid.selection : visibleRefs(result, grid)
 
     const save = async (
@@ -475,7 +487,7 @@ interface TabContentProps {
   onApply(): void
   onRevert(): void
   openTab(options: NewTabOptions): string
-  gridState: ReturnType<typeof useGridStore.getState>['states'][string] | undefined
+  gridState: GridState
   patchGrid(patch: any): void
   updateGrid(fn: any): void
   onLayout(patch: { resultsHeight?: number }): void
@@ -637,7 +649,7 @@ function TabContent({
             </div>
             <ResultsGrid
               result={tab.result}
-              state={gridState ?? emptyState}
+              state={gridState}
               patch={patchGrid}
               update={updateGrid}
               editable={canEdit}
@@ -656,12 +668,5 @@ function TabContent({
   )
 }
 
-const emptyState = {
-  edits: {},
-  deleted: {},
-  added: [],
-  selection: [],
-  anchor: null,
-  sort: null,
-  columnWidths: {}
-}
+/** Shared stable fallback for tabs that have results but no grid state yet. */
+const EMPTY_GRID = emptyGridState()

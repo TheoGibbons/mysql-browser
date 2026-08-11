@@ -336,6 +336,11 @@ textarea {
   color: var(--text-dim);
 }
 
+/* Server-owned schemas (information_schema, mysql, performance_schema, sys). */
+.tree-label.system-schema {
+  color: #aaaaaa;
+}
+
 .tree-icon {
   flex: none;
   display: inline-flex;

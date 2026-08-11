@@ -20,6 +20,9 @@ const ROW_HEIGHT = 19
 /** Extra rows rendered above and below the viewport to keep scrolling smooth. */
 const OVERSCAN = 12
 
+/** Server-owned schemas, dimmed in the tree so user schemas stand out. */
+const SYSTEM_SCHEMAS = new Set(['information_schema', 'mysql', 'performance_schema', 'sys'])
+
 type Node =
   | { kind: 'schema'; key: string; name: string; level: 0; expandable: true; expanded: boolean }
   | {
@@ -407,7 +410,11 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
                     )}
                   </span>
                   <span
-                    className={`tree-label${node.kind === 'column' ? ' dim' : ''}`}
+                    className={`tree-label${node.kind === 'column' ? ' dim' : ''}${
+                      node.kind === 'schema' && SYSTEM_SCHEMAS.has(node.name.toLowerCase())
+                        ? ' system-schema'
+                        : ''
+                    }`}
                     style={
                       node.kind === 'schema' && node.name === activeSchema
                         ? { fontWeight: 700 }

@@ -143,8 +143,7 @@ export function PreferencesDialog({ connection, onClose }: Props): JSX.Element {
     >
       {connection && (
         <div className="banner info" style={{ marginBottom: 10, borderRadius: 3 }}>
-          These settings apply to <strong>{connection.name}</strong>. Anything left at the global
-          value keeps following the global preference.
+          These settings only apply to <strong>{connection.name}</strong>
         </div>
       )}
 
