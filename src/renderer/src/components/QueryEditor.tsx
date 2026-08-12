@@ -12,7 +12,13 @@ import {
   rectangularSelection
 } from '@codemirror/view'
 import type { DecorationSet, ViewUpdate } from '@codemirror/view'
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
+import {
+  copyLineDown,
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentWithTab
+} from '@codemirror/commands'
 import { highlightSelectionMatches, searchKeymap } from '@codemirror/search'
 import {
   acceptCompletion,
@@ -314,6 +320,7 @@ export function QueryEditor({
               }
             },
             { key: 'Ctrl-Space', preventDefault: true, run: startCompletion },
+            { key: 'Ctrl-d', preventDefault: true, run: copyLineDown },
             { key: 'Tab', run: acceptCompletion },
             ...closeBracketsKeymap,
             ...completionKeymap,
