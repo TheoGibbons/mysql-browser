@@ -61,12 +61,8 @@ function Shell(): JSX.Element {
 
         {connTabs.map((tab) => {
           const colored = isValidHex(tab.config.color)
-          // A persistent coloured top border + faint tint marks the connection
-          // (strongest on the active tab) so a live DB is obvious at a glance.
           const tabStyle = colored
             ? {
-                borderTopColor: tab.config.color,
-                borderTopWidth: 3,
                 background:
                   tab.sessionId === activeSessionId ? tint(tab.config.color!, 0.16) : tint(tab.config.color!, 0.08)
               }

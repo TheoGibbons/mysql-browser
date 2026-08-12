@@ -240,6 +240,11 @@ export function ResultsGrid({
   const headerMenu = (col: number): MenuEntry[] => [
     { label: 'Copy column name', onSelect: () => copy(result.columns[col].name) },
     {
+      label: 'Copy values',
+      onSelect: () =>
+        copy(refs.map((ref) => displayValue(cellValue(result, state, ref, col))).join('\r\n'))
+    },
+    {
       label: 'Copy all column names',
       onSelect: () => copy(result.columns.map((c) => c.name).join(', '))
     },
