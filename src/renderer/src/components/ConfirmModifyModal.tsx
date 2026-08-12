@@ -7,6 +7,10 @@ interface Props {
   onCancel(): void
   onConfirm(): void
   confirmLabel?: string
+  /** Overrides the heading for things that are not a query (a dump import). */
+  title?: string
+  /** Overrides the line above the preview. */
+  message?: string
 }
 
 /**
@@ -19,7 +23,9 @@ export function ConfirmModifyModal({
   connectionName,
   onCancel,
   onConfirm,
-  confirmLabel = 'Run modifying query'
+  confirmLabel = 'Run modifying query',
+  title,
+  message
 }: Props): JSX.Element {
   const cancelRef = useRef<HTMLButtonElement>(null)
   const drag = useDialogDrag()
@@ -45,11 +51,12 @@ export function ConfirmModifyModal({
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="danger-title drag-handle" {...drag.handleProps}>
-          ⚠ Modifying query on {connectionName}
+          {title ?? `⚠ Modifying query on ${connectionName}`}
         </div>
         <div className="modal-body">
           <p style={{ margin: '0 0 8px', fontWeight: 600, color: '#8c1010' }}>
-            This will change data or schema on this connection. Read it carefully before running.
+            {message ??
+              'This will change data or schema on this connection. Read it carefully before running.'}
           </p>
           <div className="sql-preview danger-preview">{sql}</div>
         </div>

@@ -129,10 +129,6 @@ export interface Preferences {
   keepAliveIntervalSec: number
   readTimeoutSec: number
   connectTimeoutSec: number
-  // Data export and import
-  mysqldumpPath: string
-  mysqlPath: string
-  exportDirectory: string
   // Migration
   migrationConnectionTimeoutSec: number
 }
@@ -143,11 +139,68 @@ export const DEFAULT_PREFERENCES: Preferences = {
   keepAliveIntervalSec: 600,
   readTimeoutSec: 30,
   connectTimeoutSec: 60,
-  mysqldumpPath: '',
-  mysqlPath: '',
-  exportDirectory: '',
   migrationConnectionTimeoutSec: 60
 }
+
+// ---------------------------------------------------------------------------
+// External tools (Data Export / Data Import)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the dump tools live and which directories the user last used. These are
+ * deliberately *not* preferences: nobody sets them up front, they are picked in
+ * the Data Export/Import tab and remembered so the next tab opens where the last
+ * one left off.
+ */
+export interface ToolSettings {
+  mysqldumpPath: string
+  mysqlPath: string
+  pgDumpPath: string
+  pgRestorePath: string
+  psqlPath: string
+  /** Directory the last dump was written to; also seeds result-grid exports. */
+  exportDirectory: string
+  /** Directory the last import file was chosen from. */
+  importDirectory: string
+}
+
+export const DEFAULT_TOOL_SETTINGS: ToolSettings = {
+  mysqldumpPath: '',
+  mysqlPath: '',
+  pgDumpPath: '',
+  pgRestorePath: '',
+  psqlPath: '',
+  exportDirectory: '',
+  importDirectory: ''
+}
+
+/** The tool a transfer tab drives. One per engine and direction. */
+export type ToolName = 'mysqldump' | 'mysql' | 'pg_dump' | 'pg_restore' | 'psql'
+
+export const TOOL_SETTING_KEYS: Record<ToolName, keyof ToolSettings> = {
+  mysqldump: 'mysqldumpPath',
+  mysql: 'mysqlPath',
+  pg_dump: 'pgDumpPath',
+  pg_restore: 'pgRestorePath',
+  psql: 'psqlPath'
+}
+
+/** Progress and output from a running tool, streamed to the renderer. */
+export type ToolRunEvent =
+  | { runId: string; type: 'output'; stream: 'out' | 'err'; text: string }
+  | { runId: string; type: 'info'; text: string }
+  /** `total` is null when the size of the work is unknown (most dumps). */
+  | { runId: string; type: 'progress'; bytes: number; total: number | null }
+  | {
+      runId: string
+      type: 'exit'
+      code: number | null
+      signal: string | null
+      cancelled: boolean
+      /** Bytes written to the output file, when there was one. */
+      bytes: number
+      durationMs: number
+    }
 
 // ---------------------------------------------------------------------------
 // Schema tree
@@ -331,6 +384,102 @@ export interface DesignerState {
   original: TableDefinition | null
 }
 
+// ---------------------------------------------------------------------------
+// Data Export / Data Import tabs
+// ---------------------------------------------------------------------------
+
+/** How much of a dump is structure and how much is data. */
+export type DumpContents = 'structure-and-data' | 'data-only' | 'structure-only'
+
+/** How `pg_dump` writes rows: `COPY` (fastest) or INSERT statements. */
+export type PgInsertMode = 'copy' | 'inserts' | 'column-inserts'
+
+/** `pg_dump --format`: plain SQL, directory, custom archive, tar archive. */
+export type PgDumpFormat = 'p' | 'd' | 'c' | 't'
+
+/**
+ * Everything a Data Export / Data Import tab needs to rebuild its command, saved
+ * with the tab. Both engines and both directions share one shape — a tab only
+ * ever reads the fields that apply to it — so the state stays flat and
+ * JSON-serialisable.
+ */
+export interface TransferState {
+  /** Full path to the executable this tab runs. */
+  toolPath: string
+
+  /**
+   * Ticked objects, keyed by schema, the value being the ticked table names. A
+   * schema whose key is present with an empty array is included with none of its
+   * tables (its routines and events only); a schema that is absent is not
+   * exported at all.
+   */
+  selection: Record<string, string[]>
+  /**
+   * False while `selection` is still the empty default of a tab opened before
+   * the schema list arrived; the tab fills it in as soon as one does, and never
+   * touches it again.
+   */
+  seeded: boolean
+  /**
+   * Lists the server's own schemas in the object picker. Off by default: two of
+   * them cannot be dumped at all, and the other two are for the rare job of
+   * moving accounts or time zones between servers.
+   */
+  showSystemSchemas: boolean
+  contents: DumpContents
+
+  // --- MySQL ---
+  routines: boolean
+  events: boolean
+  triggers: boolean
+  includeCreateSchema: boolean
+  singleTransaction: boolean
+  /** Adds `--column-statistics=FALSE`, which an 8.0 client needs against 5.7. */
+  skipColumnStatistics: boolean
+  hexBlob: boolean
+  completeInsert: boolean
+  skipExtendedInsert: boolean
+  /** Adds `--set-gtid-purged=OFF`, which RDS and replica dumps usually need. */
+  gtidPurgedOff: boolean
+  charset: string
+
+  // --- Postgres ---
+  pgClean: boolean
+  pgIfExists: boolean
+  pgCreate: boolean
+  pgInserts: PgInsertMode
+  pgFormat: PgDumpFormat
+  pgNoOwner: boolean
+  pgNoPrivileges: boolean
+  pgVerbose: boolean
+
+  // --- Export destination ---
+  /** Directory the dump is written into. */
+  outputDir: string
+  /** File (or directory, for `--format=d`) name inside `outputDir`. */
+  outputName: string
+
+  // --- Import source ---
+  inputPath: string
+  /**
+   * Where an import lands: the schema the dump is applied to on MySQL (empty
+   * means the dump decides), or the database to connect to on Postgres.
+   */
+  targetSchema: string
+  /** MySQL: keep going after a failed statement (`--force`). */
+  force: boolean
+  /** Postgres: the input is an archive for `pg_restore`, not SQL for `psql`. */
+  pgArchive: boolean
+  pgSingleTransaction: boolean
+  pgStopOnError: boolean
+
+  /**
+   * The command the user edited by hand. Empty means the tab runs the command it
+   * generates from the options above.
+   */
+  command: string
+}
+
 export interface QueryTabState {
   id: string
   kind: TabKind
@@ -343,6 +492,8 @@ export interface QueryTabState {
   /** Statement whose result is displayed. */
   resultStatement: string
   designer: DesignerState | null
+  /** Only set on `export`/`import` tabs. */
+  transfer?: TransferState | null
   cursorLine: number
   updatedAt: number
 }
@@ -353,6 +504,8 @@ export interface SessionMeta {
   activeTabId: string | null
   expandedSchemas: string[]
   activeSchema: string | null
+  /** Lists the server's own schemas in the tree. Off by default. */
+  showSystemSchemas: boolean
   schemas: SchemaInfo[]
   schemasFetchedAt: number
   layout: SessionLayout
@@ -362,6 +515,8 @@ export interface SessionLayout {
   sidebarWidth: number
   resultsHeight: number
   historyHeight: number
+  /** Height of the output console in a Data Export / Data Import tab. */
+  transferLogHeight: number
   historyColumns: HistoryColumnWidths
 }
 
@@ -386,6 +541,7 @@ export const DEFAULT_LAYOUT: SessionLayout = {
   sidebarWidth: 260,
   resultsHeight: 300,
   historyHeight: 160,
+  transferLogHeight: 120,
   historyColumns: { ...DEFAULT_HISTORY_COLUMNS }
 }
 

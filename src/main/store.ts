@@ -4,6 +4,7 @@
  *   connections.json                    saved connections (secrets encrypted)
  *   groups.json                         home-screen groups, in display order
  *   preferences.json                    global preferences
+ *   tools.json                          dump tool paths and last-used directories
  *   sessions/<connectionId>/meta.json   schema cache, open tabs, layout
  *   sessions/<connectionId>/tabs/*.json one file per tab (spec: one file per tab)
  */
@@ -17,13 +18,15 @@ import {
   DEFAULT_HISTORY_COLUMNS,
   DEFAULT_LAYOUT,
   DEFAULT_PREFERENCES,
+  DEFAULT_TOOL_SETTINGS,
   toEngine,
   type ConnectionConfig,
   type ConnectionGroup,
   type ConnectionSecretsEnvelope,
   type Preferences,
   type QueryTabState,
-  type SessionMeta
+  type SessionMeta,
+  type ToolSettings
 } from '@shared/types'
 
 /** Marks a value as ciphertext so plaintext fallbacks stay readable. */
@@ -44,6 +47,7 @@ export async function initStore(): Promise<void> {
   fs.mkdirSync(path.join(rootDir, 'sessions'), { recursive: true })
   await migrateConnectionEngines()
   await migrateSessionMeta()
+  await migrateToolSettings()
 }
 
 /**
@@ -539,6 +543,73 @@ export async function setPreferences(prefs: Preferences): Promise<Preferences> {
 }
 
 // ---------------------------------------------------------------------------
+// External tools
+// ---------------------------------------------------------------------------
+
+/** Keys that were preferences before Data Export/Import owned them. */
+const MOVED_TOOL_KEYS = ['mysqldumpPath', 'mysqlPath', 'exportDirectory'] as const
+
+/**
+ * The dump tool paths and the export directory used to be preferences, set up
+ * front in a dialog. They are now remembered as they are used, so an existing
+ * installation's values are carried across once and removed from the files that
+ * no longer describe them — including any per-connection overrides, which would
+ * otherwise reappear as phantom preference overrides forever.
+ */
+async function migrateToolSettings(): Promise<void> {
+  const prefs = await readJson<Record<string, unknown>>(file('preferences.json'), {})
+  const present = MOVED_TOOL_KEYS.filter((key) => key in prefs)
+
+  if (present.length > 0) {
+    const stored = await readJson<Partial<ToolSettings>>(file('tools.json'), {})
+    const next = { ...stored }
+    for (const key of present) {
+      const value = prefs[key]
+      if (typeof value === 'string' && value !== '' && !next[key]) next[key] = value
+      delete prefs[key]
+    }
+    await writeJson(file('tools.json'), { ...DEFAULT_TOOL_SETTINGS, ...next })
+    await writeJson(file('preferences.json'), prefs)
+    console.log(`Moved ${present.length} tool setting(s) out of preferences.`)
+  }
+
+  // Stored connections keep their secrets encrypted, so this rewrites the raw
+  // entries rather than going through listConnections/saveConnection.
+  const connections = await readJson<ConnectionConfig[]>(file('connections.json'), [])
+  let touched = 0
+  for (const connection of connections) {
+    const overrides = connection.prefs as Record<string, unknown> | undefined
+    if (!overrides) continue
+    for (const key of MOVED_TOOL_KEYS) {
+      if (key in overrides) {
+        delete overrides[key]
+        touched++
+      }
+    }
+  }
+  if (touched > 0) {
+    await writeJson(file('connections.json'), connections)
+    console.log(`Cleared ${touched} stale tool override(s) from connections.`)
+  }
+}
+
+export async function getToolSettings(): Promise<ToolSettings> {
+  const stored = await readJson<Partial<ToolSettings>>(file('tools.json'), {})
+  const merged = { ...DEFAULT_TOOL_SETTINGS, ...stored }
+  // Somewhere to put the first dump before the user has chosen anywhere.
+  if (!merged.exportDirectory) merged.exportDirectory = app.getPath('home')
+  return merged
+}
+
+/** Merges a patch, so a tab can remember one field without knowing the rest. */
+export async function setToolSettings(patch: Partial<ToolSettings>): Promise<ToolSettings> {
+  const stored = await readJson<Partial<ToolSettings>>(file('tools.json'), {})
+  const merged = { ...DEFAULT_TOOL_SETTINGS, ...stored, ...patch }
+  await writeJson(file('tools.json'), merged)
+  return getToolSettings()
+}
+
+// ---------------------------------------------------------------------------
 // Session state (schema cache, tabs, layout)
 // ---------------------------------------------------------------------------
 
@@ -554,6 +625,7 @@ function blankSessionMeta(connectionId: string): SessionMeta {
     activeTabId: null,
     expandedSchemas: [],
     activeSchema: null,
+    showSystemSchemas: false,
     schemas: [],
     schemasFetchedAt: 0,
     layout: { ...DEFAULT_LAYOUT, historyColumns: { ...DEFAULT_HISTORY_COLUMNS } }

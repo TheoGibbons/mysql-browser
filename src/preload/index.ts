@@ -12,6 +12,8 @@ import type {
   SessionStatus,
   SessionStatusEvent,
   TableDefinition,
+  ToolRunEvent,
+  ToolSettings,
   UpdateState
 } from '@shared/types'
 
@@ -37,6 +39,9 @@ function subscribe<T>(channel: string, handler: (payload: T) => void): () => voi
 }
 
 const api = {
+  /** Lets the renderer pick a path separator without guessing. */
+  platform: process.platform as NodeJS.Platform,
+
   connections: {
     list: () => call<ConnectionConfig[]>('connections:list'),
     save: (config: ConnectionConfig) => call<ConnectionConfig[]>('connections:save', config),
@@ -135,10 +140,33 @@ const api = {
     read: () => call<string>('clipboard:read')
   },
 
+  tools: {
+    /** Paths and directories, with any tool found on this machine filled in. */
+    get: () => call<ToolSettings>('tools:get'),
+    /** Merges a patch — a tab remembers one field without knowing the rest. */
+    set: (patch: Partial<ToolSettings>) => call<ToolSettings>('tools:set', patch),
+    /**
+     * Runs a dump/restore command. Resolves when the tool has exited; watch
+     * `onEvent` for its output, progress and exit status.
+     */
+    run: (
+      runId: string,
+      config: ConnectionConfig,
+      request: { command: string; outputPath?: string }
+    ) => call<void>('tools:run', runId, config, request),
+    cancel: (runId: string) => call<boolean>('tools:cancel', runId),
+    onEvent: (handler: (event: ToolRunEvent) => void) =>
+      subscribe<ToolRunEvent>('tools:event', handler)
+  },
+
   dialog: {
-    openFile: (title: string, filters?: { name: string; extensions: string[] }[]) =>
-      call<string | null>('dialog:openFile', title, filters),
-    openDirectory: (title: string) => call<string | null>('dialog:openDirectory', title),
+    openFile: (
+      title: string,
+      filters?: { name: string; extensions: string[] }[],
+      defaultPath?: string
+    ) => call<string | null>('dialog:openFile', title, filters, defaultPath),
+    openDirectory: (title: string, defaultPath?: string) =>
+      call<string | null>('dialog:openDirectory', title, defaultPath),
     saveFile: (title: string, defaultPath: string, filters?: { name: string; extensions: string[] }[]) =>
       call<string | null>('dialog:saveFile', title, defaultPath, filters)
   },
@@ -146,7 +174,9 @@ const api = {
   files: {
     write: (filePath: string, contents: string) => call<void>('shell:writeFile', filePath, contents),
     read: (filePath: string) => call<string>('shell:readFile', filePath),
-    reveal: (filePath: string) => call<void>('shell:showItem', filePath)
+    reveal: (filePath: string) => call<void>('shell:showItem', filePath),
+    /** True for a directory as well — anything that would be written over. */
+    exists: (filePath: string) => call<boolean>('shell:exists', filePath)
   },
 
   updates: {

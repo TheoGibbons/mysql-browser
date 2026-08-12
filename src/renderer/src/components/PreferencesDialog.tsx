@@ -38,42 +38,6 @@ function NumberField({ label, value, onChange, hint, min = 0, suffix }: NumberFi
   )
 }
 
-interface TextFieldProps {
-  label: string
-  value: string
-  onChange(value: string): void
-  hint?: string
-  browse?: 'file' | 'directory'
-}
-
-function TextField({ label, value, onChange, hint, browse }: TextFieldProps): JSX.Element {
-  const pick = async (): Promise<void> => {
-    const result =
-      browse === 'directory'
-        ? await window.api.dialog.openDirectory(label)
-        : await window.api.dialog.openFile(label, [
-            { name: 'Executables', extensions: ['exe'] },
-            { name: 'All files', extensions: ['*'] }
-          ])
-    if (result) onChange(result)
-  }
-
-  return (
-    <>
-      <label>{label}</label>
-      <div className="row" style={{ gap: 6 }}>
-        <input className="field" style={{ flex: 1 }} value={value} onChange={(e) => onChange(e.target.value)} />
-        {browse && (
-          <button className="btn" style={{ minWidth: 34, height: 22 }} onClick={pick}>
-            …
-          </button>
-        )}
-      </div>
-      {hint && <div className="prefs-hint">{hint}</div>}
-    </>
-  )
-}
-
 export function PreferencesDialog({ connection, onClose }: Props): JSX.Element {
   const globalPrefs = useAppStore((s) => s.prefs)
   const savePrefs = useAppStore((s) => s.setPrefs)
@@ -190,33 +154,6 @@ export function PreferencesDialog({ connection, onClose }: Props): JSX.Element {
             onChange={(v) => patch({ connectTimeoutSec: v })}
             suffix="seconds"
             hint="Maximum time to wait before a connection attempt is aborted."
-          />
-        </div>
-      </fieldset>
-
-      <fieldset className="group">
-        <legend>Data export and import</legend>
-        <div className="prefs-grid">
-          <TextField
-            label="Path to mysqldump tool:"
-            value={prefs.mysqldumpPath}
-            onChange={(v) => patch({ mysqldumpPath: v })}
-            browse="file"
-            hint="Used by Data Export."
-          />
-          <TextField
-            label="Path to mysql tool:"
-            value={prefs.mysqlPath}
-            onChange={(v) => patch({ mysqlPath: v })}
-            browse="file"
-            hint="Used by Data Import."
-          />
-          <TextField
-            label="Export directory path:"
-            value={prefs.exportDirectory}
-            onChange={(v) => patch({ exportDirectory: v })}
-            browse="directory"
-            hint="Default location for dump files and result-grid exports."
           />
         </div>
       </fieldset>

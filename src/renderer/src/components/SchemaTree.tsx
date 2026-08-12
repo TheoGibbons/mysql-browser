@@ -15,13 +15,11 @@ import {
 import { dialectFor, qualify } from '@shared/dialect'
 import * as T from '../lib/sqlTemplates'
 import { designerFromDefinition, emptyDesigner } from '../lib/designer'
+import { isSystemSchema } from '../lib/systemSchemas'
 
 const ROW_HEIGHT = 19
 /** Extra rows rendered above and below the viewport to keep scrolling smooth. */
 const OVERSCAN = 12
-
-/** Server-owned schemas, dimmed in the tree so user schemas stand out. */
-const SYSTEM_SCHEMAS = new Set(['information_schema', 'mysql', 'performance_schema', 'sys'])
 
 type Node =
   | { kind: 'schema'; key: string; name: string; level: 0; expandable: true; expanded: boolean }
@@ -53,6 +51,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
     activeSchema,
     selectedNode,
     schemasLoading,
+    showSystemSchemas,
     status
   } = conn
 
@@ -62,6 +61,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
   const loadSchemaColumns = useAppStore((s) => s.loadSchemaColumns)
   const setSelectedNode = useAppStore((s) => s.setSelectedNode)
   const setActiveSchema = useAppStore((s) => s.setActiveSchema)
+  const setShowSystemSchemas = useAppStore((s) => s.setShowSystemSchemas)
   const runQuery = useAppStore((s) => s.runQuery)
 
   const engine = conn.config.engine
@@ -83,10 +83,21 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
 
   const needle = filter.trim().toLowerCase()
 
+  // The server's own schemas are noise for all but one job. The schema in use
+  // stays visible either way, so nothing can hide the schema being worked in.
+  const listed = useMemo(
+    () =>
+      showSystemSchemas
+        ? schemas
+        : schemas.filter((s) => !isSystemSchema(s.name) || s.name === activeSchema),
+    [schemas, showSystemSchemas, activeSchema]
+  )
+  const hiddenCount = schemas.length - listed.length
+
   const nodes = useMemo<Node[]>(() => {
     const out: Node[] = []
 
-    for (const schema of schemas) {
+    for (const schema of listed) {
       const schemaMatches = needle === '' || schema.name.toLowerCase().includes(needle)
       const matchingTables = needle
         ? schema.tables.filter(
@@ -138,7 +149,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
     }
 
     return out
-  }, [schemas, needle, expanded, columnsCache])
+  }, [listed, needle, expanded, columnsCache])
 
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
   const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2
@@ -372,7 +383,9 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
                 ? status === 'connected'
                   ? 'No schemas found.'
                   : 'Not connected. Cached schemas will appear here once this connection has been opened online at least once.'
-                : `Nothing matches “${filter}”.`}
+                : listed.length === 0
+                  ? 'This server has only its own schemas.'
+                  : `Nothing matches “${filter}”.`}
           </div>
         ) : (
           <div style={{ height: nodes.length * ROW_HEIGHT, position: 'relative' }}>
@@ -411,9 +424,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
                   </span>
                   <span
                     className={`tree-label${node.kind === 'column' ? ' dim' : ''}${
-                      node.kind === 'schema' && SYSTEM_SCHEMAS.has(node.name.toLowerCase())
-                        ? ' system-schema'
-                        : ''
+                      node.kind === 'schema' && isSystemSchema(node.name) ? ' system-schema' : ''
                     }`}
                     style={
                       node.kind === 'schema' && node.name === activeSchema
@@ -447,6 +458,18 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
               ))}
             </div>
           </div>
+        )}
+
+        {(hiddenCount > 0 || showSystemSchemas) && (
+          <button
+            className="link-btn tree-footer"
+            onClick={() => setShowSystemSchemas(sessionId, !showSystemSchemas)}
+            title="information_schema, mysql, performance_schema and sys — the server's own schemas"
+          >
+            {showSystemSchemas
+              ? 'Hide the server’s own schemas'
+              : `Show ${hiddenCount} system schemas`}
+          </button>
         )}
       </div>
     </>

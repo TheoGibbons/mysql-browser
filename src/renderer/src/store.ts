@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import {
   DEFAULT_LAYOUT,
   DEFAULT_PREFERENCES,
+  DEFAULT_TOOL_SETTINGS,
   type ConnectionConfig,
   type ConnectionGroup,
   type HistoryEntry,
@@ -10,9 +11,12 @@ import {
   type SchemaInfo,
   type SessionLayout,
   type SessionStatus,
-  type TabKind
+  type TabKind,
+  type ToolRunEvent,
+  type ToolSettings
 } from '@shared/types'
 import { guessTableName, splitStatements } from '@shared/sql'
+import { defaultTransferState } from '@shared/transfer'
 import { newId } from './lib/ids'
 import { emptyGridState, type GridState } from './lib/grid'
 
@@ -37,6 +41,8 @@ export interface ConnTab {
   activeSchema: string | null
   selectedNode: string | null
   filter: string
+  /** Lists the server's own schemas in the tree. Off by default, saved per connection. */
+  showSystemSchemas: boolean
 
   tabs: QueryTabState[]
   activeTabId: string | null
@@ -53,6 +59,8 @@ interface AppState {
   /** Home-screen groups, in display order. */
   groups: ConnectionGroup[]
   prefs: Preferences
+  /** Dump tool paths and last-used directories, remembered as they are used. */
+  toolSettings: ToolSettings
   connTabs: ConnTab[]
   /** `null` means the Home tab is showing. */
   activeSessionId: string | null
@@ -64,6 +72,8 @@ interface AppState {
   setConnections(connections: ConnectionConfig[]): void
   setGroups(groups: ConnectionGroup[]): void
   setPrefs(prefs: Preferences): Promise<void>
+  /** Remembers a tool path or directory for the next tab that opens. */
+  setToolSettings(patch: Partial<ToolSettings>): Promise<void>
 
   openConnection(config: ConnectionConfig, connect: boolean): Promise<string>
   closeConnTab(sessionId: string): Promise<void>
@@ -77,6 +87,7 @@ interface AppState {
   setSchemaFilter(sessionId: string, filter: string): void
   setSelectedNode(sessionId: string, key: string | null): void
   setActiveSchema(sessionId: string, schema: string | null): void
+  setShowSystemSchemas(sessionId: string, show: boolean): void
 
   newTab(sessionId: string, options?: NewTabOptions): string
   closeTab(sessionId: string, tabId: string): void
@@ -133,6 +144,14 @@ function makeTab(options: NewTabOptions, index: number): QueryTabState {
 /** `sessionId schema` keys whose column fetch is already in flight. */
 const columnsInflight = new Set<string>()
 
+/**
+ * Whether the IPC event handlers are already attached. They belong to the
+ * window, not to a React tree: `ipcRenderer.on` accumulates listeners, and
+ * StrictMode deliberately runs mount effects twice in development, so a second
+ * `init()` would append every line of a tool's output to the log twice.
+ */
+let listening = false
+
 export const useAppStore = create<AppState>((set, get) => {
   /** Applies `fn` to one connection tab and returns the new state. */
   const patchConn = (sessionId: string, fn: (tab: ConnTab) => ConnTab): void => {
@@ -148,6 +167,7 @@ export const useAppStore = create<AppState>((set, get) => {
     connections: [],
     groups: [],
     prefs: DEFAULT_PREFERENCES,
+    toolSettings: DEFAULT_TOOL_SETTINGS,
     connTabs: [],
     activeSessionId: null,
     ready: false,
@@ -158,16 +178,20 @@ export const useAppStore = create<AppState>((set, get) => {
       // the page is loaded in a plain browser (App renders a notice instead).
       if (typeof window === 'undefined' || !window.api) return
 
-      const [connections, groups, prefs] = await Promise.all([
+      const [connections, groups, prefs, toolSettings] = await Promise.all([
         window.api.connections.list(),
         window.api.groups.list(),
-        window.api.prefs.get()
+        window.api.prefs.get(),
+        window.api.tools.get()
       ])
-      set({ connections, groups, prefs, ready: true })
+      set({ connections, groups, prefs, toolSettings, ready: true })
 
+      if (listening) return
+      listening = true
       window.api.session.onStatus((event) => {
         get().applyStatus(event.sessionId, event.status, event.message, event.serverVersion)
       })
+      window.api.tools.onEvent((event) => useTransferStore.getState().apply(event))
     },
 
     setConnections(connections) {
@@ -190,6 +214,12 @@ export const useAppStore = create<AppState>((set, get) => {
       set({ prefs: saved })
     },
 
+    async setToolSettings(patch) {
+      set({ toolSettings: { ...get().toolSettings, ...patch } })
+      const saved = await window.api.tools.set(patch)
+      set({ toolSettings: saved })
+    },
+
     async openConnection(config, shouldConnect) {
       const sessionId = newId('sess')
       const isPrimary = !get().connTabs.some((t) => t.connectionId === config.id)
@@ -209,6 +239,7 @@ export const useAppStore = create<AppState>((set, get) => {
         activeSchema: config.defaultSchema || null,
         selectedNode: null,
         filter: '',
+        showSystemSchemas: false,
         tabs: [],
         activeTabId: null,
         running: {},
@@ -234,7 +265,15 @@ export const useAppStore = create<AppState>((set, get) => {
             // A stored null means "nothing chosen", which falls back to the
             // connection's default schema rather than to no schema at all.
             activeSchema: meta.activeSchema ?? t.activeSchema,
-            layout: meta.layout,
+            showSystemSchemas: meta.showSystemSchemas,
+            // Completed rather than taken as-is: a session file written by an
+            // older version is missing whatever has been added since, and a
+            // missing pane size is an unset CSS height, not a default one.
+            layout: {
+              ...DEFAULT_LAYOUT,
+              ...meta.layout,
+              historyColumns: { ...DEFAULT_LAYOUT.historyColumns, ...meta.layout?.historyColumns }
+            },
             tabs,
             activeTabId:
               meta.activeTabId && tabs.some((x) => x.id === meta.activeTabId)
@@ -416,10 +455,25 @@ export const useAppStore = create<AppState>((set, get) => {
       void get().persistMeta(sessionId)
     },
 
+    setShowSystemSchemas(sessionId, show) {
+      patchConn(sessionId, (t) => ({ ...t, showSystemSchemas: show }))
+      void get().persistMeta(sessionId)
+    },
+
     newTab(sessionId, options = {}) {
       const tab = conn(sessionId)
       if (!tab) return ''
       const created = makeTab(options, tab.tabs.length)
+
+      if (created.kind === 'export' || created.kind === 'import') {
+        created.transfer = defaultTransferState({
+          kind: created.kind,
+          config: tab.config,
+          settings: get().toolSettings,
+          activeSchema: tab.activeSchema,
+          schemas: tab.schemas
+        })
+      }
 
       patchConn(sessionId, (t) => ({
         ...t,
@@ -459,6 +513,13 @@ export const useAppStore = create<AppState>((set, get) => {
 
       if (tab.isPrimary) {
         for (const id of tabIds) void window.api.storage.deleteTab(tab.connectionId, id)
+      }
+      // A finished transfer log goes with its tab. One still running is left
+      // alone: it keeps going, and its history entry still needs the result.
+      for (const id of tabIds) {
+        const key = runKey(sessionId, id)
+        const run = useTransferStore.getState().runs[key]
+        if (run && run.status !== 'running') useTransferStore.getState().clear(key)
       }
       set((state) => {
         const dirty = { ...state.dirtyTabs }
@@ -645,6 +706,7 @@ export const useAppStore = create<AppState>((set, get) => {
           activeTabId: tab.activeTabId,
           expandedSchemas: Object.keys(tab.expanded).filter((k) => tab.expanded[k]),
           activeSchema: tab.activeSchema,
+          showSystemSchemas: tab.showSystemSchemas,
           schemas: tab.schemas,
           schemasFetchedAt: tab.schemasFetchedAt,
           layout: tab.layout
@@ -712,3 +774,130 @@ export const useGridStore = create<GridStore>((set, get) => ({
     })
   }
 }))
+
+// ---------------------------------------------------------------------------
+// Data Export / Data Import runs. Kept outside the tab state because a run is
+// not worth saving to disk, and outside the component because switching tabs
+// unmounts it while mysqldump keeps going.
+// ---------------------------------------------------------------------------
+
+export interface TransferChunk {
+  stream: 'out' | 'err' | 'info'
+  text: string
+}
+
+export interface TransferRun {
+  status: 'running' | 'ok' | 'error' | 'cancelled'
+  command: string
+  /** File or directory the run writes, for the progress figure and Show in folder. */
+  outputPath: string
+  startedAt: number
+  durationMs: number
+  chunks: TransferChunk[]
+  bytes: number
+  /** Total the run is working through, when it is knowable (imports). */
+  total: number | null
+  exitCode: number | null
+  /** History entry to update when the run ends. */
+  historyId: string | null
+}
+
+/** Enough output to diagnose a failure without turning the log into a dump viewer. */
+const MAX_CHUNKS = 2000
+
+interface TransferStore {
+  runs: Record<string, TransferRun>
+  begin(runId: string, run: Omit<TransferRun, 'status' | 'chunks' | 'bytes' | 'total' | 'exitCode' | 'durationMs'>): void
+  apply(event: ToolRunEvent): void
+  clear(runId: string): void
+}
+
+export const runKey = (sessionId: string, tabId: string): string => `${sessionId}:${tabId}`
+
+export const useTransferStore = create<TransferStore>((set, get) => ({
+  runs: {},
+
+  begin(runId, run) {
+    set((state) => ({
+      runs: {
+        ...state.runs,
+        [runId]: {
+          ...run,
+          status: 'running',
+          chunks: [],
+          bytes: 0,
+          total: null,
+          exitCode: null,
+          durationMs: 0
+        }
+      }
+    }))
+  },
+
+  apply(event) {
+    const run = get().runs[event.runId]
+    if (!run) return
+
+    const patch = (next: Partial<TransferRun>): void =>
+      set((state) => ({ runs: { ...state.runs, [event.runId]: { ...state.runs[event.runId], ...next } } }))
+
+    if (event.type === 'output' || event.type === 'info') {
+      const chunk: TransferChunk =
+        event.type === 'info'
+          ? { stream: 'info', text: `${event.text}\n` }
+          : { stream: event.stream, text: event.text }
+      patch({ chunks: [...run.chunks, chunk].slice(-MAX_CHUNKS) })
+      return
+    }
+
+    if (event.type === 'progress') {
+      patch({ bytes: event.bytes, total: event.total })
+      return
+    }
+
+    const status = event.cancelled ? 'cancelled' : event.code === 0 ? 'ok' : 'error'
+    patch({
+      status,
+      exitCode: event.code,
+      durationMs: event.durationMs,
+      bytes: event.bytes || run.bytes,
+      total: null
+    })
+
+    if (run.historyId) {
+      const [sessionId] = event.runId.split(':')
+      useAppStore.getState().updateHistory(sessionId, run.historyId, {
+        status: status === 'ok' ? 'ok' : 'error',
+        message:
+          status === 'ok'
+            ? `${formatBytes(event.bytes)} · ${run.outputPath || 'done'}`
+            : status === 'cancelled'
+              ? 'Stopped'
+              : `Tool exited with code ${event.code ?? '?'}`,
+        durationMs: event.durationMs,
+        fetchMs: 0
+      })
+    }
+  },
+
+  clear(runId) {
+    set((state) => {
+      const next = { ...state.runs }
+      delete next[runId]
+      return { runs: next }
+    })
+  }
+}))
+
+/** `1.2 MB` — sizes here are file sizes, so powers of 1024. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
+}

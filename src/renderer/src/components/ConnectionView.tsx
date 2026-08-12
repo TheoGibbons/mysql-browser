@@ -16,6 +16,7 @@ import {
   type GridState
 } from '../lib/grid'
 import { isValidHex, tint } from '../lib/color'
+import { dirNameOf, joinPath } from '@shared/transfer'
 import { SchemaTree } from './SchemaTree'
 import { QueryTabsBar } from './QueryTabsBar'
 import { QueryEditor, type EditorApi } from './QueryEditor'
@@ -51,7 +52,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
   const engine = conn.config.engine
   const d = dialectFor(engine)
 
-  const prefs = useAppStore((s) => s.prefs)
+  const exportDirectory = useAppStore((s) => s.toolSettings.exportDirectory)
   const newTab = useAppStore((s) => s.newTab)
   const closeTab = useAppStore((s) => s.closeTab)
   const closeTabs = useAppStore((s) => s.closeTabs)
@@ -269,14 +270,19 @@ export function ConnectionView({ conn }: Props): JSX.Element {
       description: string
     ): Promise<void> => {
       const base = (activeTab?.title || 'result').replace(/[^\w.-]+/g, '_')
-      const suggested = prefs.exportDirectory
-        ? `${prefs.exportDirectory}\\${base}.${extension}`
-        : `${base}.${extension}`
+      // The directory Data Export last wrote to is the one the user thinks of as
+      // "where exports go", so grid exports start there too.
+      const suggested = joinPath(
+        exportDirectory,
+        `${base}.${extension}`,
+        window.api.platform === 'win32'
+      )
       const target = await window.api.dialog.saveFile('Export result set', suggested, [
         { name: description, extensions: [extension] }
       ])
       if (!target) return
       await window.api.files.write(target, contents)
+      void useAppStore.getState().setToolSettings({ exportDirectory: dirNameOf(target) })
       pushHistory(sessionId, {
         status: 'ok',
         startedAt: Date.now(),
@@ -518,12 +524,11 @@ function TabContent({
   onLayout,
   onLayoutCommit
 }: TabContentProps): JSX.Element {
-  const prefs = useAppStore((s) => s.prefs)
   const engine = conn.config.engine
   const d = dialectFor(engine)
 
   if (tab.kind === 'export' || tab.kind === 'import') {
-    return <ExportImportTab kind={tab.kind} config={conn.config} prefs={prefs} />
+    return <ExportImportTab conn={conn} tab={tab} />
   }
 
   if (tab.kind === 'designer' && tab.designer) {

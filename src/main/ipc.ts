@@ -7,10 +7,14 @@ import type {
   IpcResult,
   Preferences,
   QueryTabState,
-  SessionMeta
+  SessionMeta,
+  ToolName,
+  ToolSettings
 } from '@shared/types'
+import { TOOL_SETTING_KEYS } from '@shared/types'
 import { Session, testConnection } from './db/session'
 import * as store from './store'
+import { cancelAllTools, cancelTool, detectTool, runTool, type ToolRunRequest } from './tools'
 import { check, getUpdateState, installNow } from './updater'
 
 /** Live sessions, keyed by connection *tab* id — several may share a connectionId. */
@@ -125,6 +129,29 @@ export function registerIpc(): void {
     return saved
   })
 
+  // --- external tools (Data Export / Data Import) ------------------------
+
+  handle('tools:get', async () => {
+    const settings = await store.getToolSettings()
+    // Probing costs a few stat calls, and finding the tools for the user beats
+    // making them hunt for mysqldump.exe before their first export.
+    const found: Partial<ToolSettings> = {}
+    for (const [tool, key] of Object.entries(TOOL_SETTING_KEYS) as [ToolName, keyof ToolSettings][]) {
+      if (settings[key]) continue
+      const detected = detectTool(tool)
+      if (detected) found[key] = detected
+    }
+    return Object.keys(found).length > 0 ? store.setToolSettings(found) : settings
+  })
+  handle('tools:set', (patch: Partial<ToolSettings>) => store.setToolSettings(patch))
+
+  handle('tools:run', async (runId: string, config: ConnectionConfig, request: ToolRunRequest) => {
+    await runTool(runId, config, request, await effectivePrefs(config), (event) =>
+      broadcast('tools:event', event)
+    )
+  })
+  handle('tools:cancel', (runId: string) => cancelTool(runId))
+
   // --- session lifecycle -------------------------------------------------
 
   handle('session:open', async (sessionId: string, config: ConnectionConfig) => {
@@ -210,19 +237,27 @@ export function registerIpc(): void {
   })
   handle('clipboard:read', () => clipboard.readText())
 
-  handle('dialog:openFile', async (title: string, filters?: Electron.FileFilter[]) => {
+  handle(
+    'dialog:openFile',
+    async (title: string, filters?: Electron.FileFilter[], defaultPath?: string) => {
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      const result = await dialog.showOpenDialog(win, {
+        title,
+        properties: ['openFile'],
+        filters,
+        defaultPath
+      })
+      return result.canceled ? null : result.filePaths[0]
+    }
+  )
+
+  handle('dialog:openDirectory', async (title: string, defaultPath?: string) => {
     const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     const result = await dialog.showOpenDialog(win, {
       title,
-      properties: ['openFile'],
-      filters
+      properties: ['openDirectory'],
+      defaultPath
     })
-    return result.canceled ? null : result.filePaths[0]
-  })
-
-  handle('dialog:openDirectory', async (title: string) => {
-    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
-    const result = await dialog.showOpenDialog(win, { title, properties: ['openDirectory'] })
     return result.canceled ? null : result.filePaths[0]
   })
 
@@ -246,13 +281,26 @@ export function registerIpc(): void {
     shell.showItemInFolder(filePath)
   })
 
+  handle('shell:exists', async (filePath: string) => {
+    const fsp = await import('node:fs/promises')
+    return fsp
+      .stat(filePath)
+      .then(() => true)
+      .catch(() => false)
+  })
+
   handle('updates:get', () => getUpdateState())
   handle('updates:check', () => check())
   handle('updates:install', () => installNow())
 }
 
-/** Closes every worker on shutdown so no MySQL sockets are left dangling. */
+/**
+ * Closes every worker on shutdown so no MySQL sockets are left dangling, and
+ * stops any dump still running — its temporary password file is only deleted by
+ * the code that started it.
+ */
 export async function shutdownSessions(): Promise<void> {
+  await cancelAllTools()
   await Promise.all([...sessions.values()].map((s) => s.close()))
   sessions.clear()
 }
