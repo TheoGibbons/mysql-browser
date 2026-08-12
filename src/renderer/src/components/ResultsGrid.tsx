@@ -203,6 +203,26 @@ export function ResultsGrid({
     update((current) => ({ ...current, added: [...current.added, row] }))
   }, [result.columns.length, update])
 
+  /**
+   * Appends pending copies of `targets` — the same thing Add Row does, with the
+   * values filled in. Nothing is sent to the server until Apply, so the copies
+   * can be edited first. Auto-increment columns are left NULL: carrying the
+   * original key over would only make Apply fail on a duplicate key.
+   */
+  const duplicateRows = useCallback(
+    (targets: RowRef[]) => {
+      update((current) => {
+        const copies = targets.map((ref) =>
+          result.columns.map((column, col) =>
+            column.isAutoIncrement ? null : cellValue(result, current, ref, col)
+          )
+        )
+        return { ...current, added: [...current.added, ...copies] }
+      })
+    },
+    [result, update]
+  )
+
   const pasteRows = useCallback(async () => {
     const text = await window.api.clipboard.read()
     const rows = parsePastedRows(text, result.columns.length)
@@ -279,6 +299,11 @@ export function ResultsGrid({
             onSelect: () => col !== null && copy(displayValue(cellValue(result, state, ref, col)))
           }
         ]
+      },
+      {
+        label: `Duplicate ${label}`,
+        disabled: !editable,
+        onSelect: () => duplicateRows(ordered)
       },
       {
         label: 'Add Row',

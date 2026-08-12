@@ -134,8 +134,11 @@ function MenuPanel({ x, y, entries, onClose }: PanelProps): JSX.Element {
               }}
               onClick={() => {
                 if (entry.disabled || entry.submenu) return
-                entry.onSelect?.()
+                // Dismiss first. If the action throws, the menu still closes and
+                // the error reaches the console, instead of the click looking
+                // like it never landed at all.
                 onClose()
+                entry.onSelect?.()
               }}
             >
               <span>{entry.label}</span>

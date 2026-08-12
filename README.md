@@ -35,6 +35,8 @@ protocol).
 | Result grid (edit/apply/revert) | `components/ResultsGrid.tsx` + `lib/grid.ts` |
 | History | `components/HistoryView.tsx` |
 | Create/alter table designer | `components/TableDesigner.tsx` + `lib/designerSql.ts` |
+| Data Export / Data Import | `components/ExportImportTab.tsx`, `TransferObjects.tsx`, `TransferRunner.tsx` |
+| `mysqldump`/`mysql` command build + run | `shared/transfer.ts`, `main/tools.ts` |
 | Grid ↔ SQL, apply plans | `lib/grid.ts`, `shared/sql.ts` |
 
 ## Safety: never silently modify the database
@@ -69,6 +71,4 @@ npm run dist         # unpacked Windows app into release/
 
 ## Not yet implemented
 
-Data Export / Data Import open a tab that shows the `mysqldump`/`mysql` config
-they will use, but do not run the tools yet. The table designer omits Triggers,
-Partitioning and Options, per spec.
+The table designer omits Triggers, Partitioning and Options, per spec.

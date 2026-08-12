@@ -38,19 +38,46 @@ const LOST_CONNECTION_CODES = new Set([
   'ER_CLIENT_INTERACTION_TIMEOUT'
 ])
 
-/** Converts binary payloads into something the grid can display. */
+/** Small payloads inline as hex; anything larger is described, not dumped. */
+function hexOrSummary(field: any, noun: string): string | null {
+  const buf = field.buffer()
+  if (buf === null) return null
+  return buf.length <= MAX_INLINE_BLOB
+    ? '0x' + buf.toString('hex')
+    : `${noun} (${buf.length} bytes)`
+}
+
+/**
+ * Converts binary payloads into something the grid can display.
+ *
+ * Every cell has to leave here as a `CellValue` scalar. mysql2 will otherwise
+ * hand back a parsed object for JSON and a Buffer for binary columns, and both
+ * reach code that assumes a string — the grid renders them as `[object Object]`
+ * and the clipboard/SQL builders throw outright.
+ */
 function castField(field: any, next: () => unknown): unknown {
   const type: string = field.type
   if (type === 'GEOMETRY') {
     const buf = field.buffer()
     return buf === null ? null : `GEOMETRY (${buf.length} bytes)`
   }
+  // The server's own rendering of the document, rather than a re-serialised
+  // parse of it: key order and number formatting stay as MySQL stored them.
+  if (type === 'JSON') return field.string()
+  if (type === 'VECTOR') {
+    const buf = field.buffer()
+    return buf === null ? null : `VECTOR (${buf.length} bytes)`
+  }
   if (type === 'BLOB' || type === 'TINY_BLOB' || type === 'MEDIUM_BLOB' || type === 'LONG_BLOB') {
     const isBinary = field.characterSet === BINARY_CHARSET
     if (!isBinary) return field.string()
-    const buf = field.buffer()
-    if (buf === null) return null
-    return buf.length <= MAX_INLINE_BLOB ? '0x' + buf.toString('hex') : `BLOB (${buf.length} bytes)`
+    return hexOrSummary(field, 'BLOB')
+  }
+  // BINARY/VARBINARY arrive as STRING/VAR_STRING on the binary charset; every
+  // other collation is an ordinary CHAR/VARCHAR mysql2 already decodes for us.
+  if (type === 'STRING' || type === 'VAR_STRING') {
+    if (field.characterSet !== BINARY_CHARSET) return next()
+    return hexOrSummary(field, 'BINARY')
   }
   if (type === 'BIT') {
     const buf = field.buffer()

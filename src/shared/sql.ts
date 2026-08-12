@@ -7,7 +7,7 @@
  */
 
 import type { CellValue, ColumnMeta, DbEngine } from './types'
-import { escapeValue, qualify, type Dialect } from './dialect'
+import { cellText, escapeValue, qualify, type Dialect } from './dialect'
 
 export { escapeValue, qualify } from './dialect'
 
@@ -312,9 +312,7 @@ export function referencedTables(sql: string): TableRef[] {
 
 /** Formats a value the way the grid and clipboard helpers should show it. */
 export function displayValue(value: CellValue): string {
-  if (value === null || value === undefined) return 'NULL'
-  if (typeof value === 'boolean') return value ? '1' : '0'
-  return String(value)
+  return cellText(value)
 }
 
 export function isNumericColumn(col: ColumnMeta): boolean {

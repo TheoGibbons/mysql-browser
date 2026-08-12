@@ -123,6 +123,31 @@ export function dialectFor(engine: DbEngine | undefined): Dialect {
 // Shared value formatting
 // ---------------------------------------------------------------------------
 
+/**
+ * Text for a cell value that is not one of the scalars `CellValue` allows.
+ *
+ * Drivers are responsible for flattening every cell to a scalar, but one that
+ * slips through must not throw: `stringLiteral` calls `String.replace`, so an
+ * object or Buffer reaching it takes out whatever was using the value — and a
+ * clipboard action that dies mid-click leaves no sign anything went wrong.
+ */
+function fallbackText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value instanceof Date) return value.toISOString()
+  if (ArrayBuffer.isView(value)) {
+    const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+    return '0x' + Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value) ?? String(value)
+    } catch {
+      return String(value)
+    }
+  }
+  return String(value)
+}
+
 /** Renders a cell value as a SQL literal for the given dialect. */
 export function escapeValue(d: Dialect, value: CellValue | undefined, numeric = false): string {
   if (value === null || value === undefined) return 'NULL'
@@ -132,8 +157,17 @@ export function escapeValue(d: Dialect, value: CellValue | undefined, numeric = 
     return value ? '1' : '0'
   }
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL'
+  if (typeof value !== 'string') return d.stringLiteral(fallbackText(value))
   if (numeric && value !== '' && !Number.isNaN(Number(value))) return String(Number(value))
   return d.stringLiteral(value)
+}
+
+/** The text the grid shows for a cell — and the text `escapeValue` quotes. */
+export function cellText(value: CellValue | undefined): string {
+  if (value === null || value === undefined) return 'NULL'
+  if (typeof value === 'boolean') return value ? '1' : '0'
+  if (typeof value === 'string') return value
+  return fallbackText(value)
 }
 
 export function qualify(d: Dialect, schema: string | null | undefined, table: string): string {
