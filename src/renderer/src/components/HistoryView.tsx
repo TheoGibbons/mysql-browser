@@ -156,6 +156,15 @@ export function HistoryView({
             const running = entry.status === 'running'
             const elapsed = running ? now - entry.startedAt : null
             const singleLineAction = entry.action.replace(/\s+/g, ' ').trim()
+            const message =
+              running && elapsed !== null
+                ? `Running… ${(elapsed / 1000).toFixed(0)}s`
+                : entry.message
+            const duration = running
+              ? ''
+              : `${formatDuration(entry.durationMs)}${
+                  entry.fetchMs !== null ? ` / ${formatDuration(entry.fetchMs)}` : ''
+                }`
 
             return (
               <tr
@@ -179,30 +188,23 @@ export function HistoryView({
                     }
                   ])
                 }}
-                title={entry.action}
               >
-                <td style={{ textAlign: 'center' }}>
+                <td style={{ textAlign: 'center' }} title={entry.status}>
                   <span className={`status-icon ${entry.status}`}>
                     {entry.status === 'ok' ? '✓' : entry.status === 'error' ? '!' : ''}
                   </span>
                 </td>
-                <td>{entry.seq}</td>
+                <td title={String(entry.seq)}>{entry.seq}</td>
                 <td title={new Date(entry.startedAt).toLocaleString()}>
                   {relativeTime(entry.startedAt, now)}
                 </td>
-                <td className="action">{singleLineAction}</td>
-                <td className="message">
-                  {running && elapsed !== null
-                    ? `Running… ${(elapsed / 1000).toFixed(0)}s`
-                    : entry.message}
+                <td className="action" title={entry.action}>
+                  {singleLineAction}
                 </td>
-                <td>
-                  {running
-                    ? ''
-                    : `${formatDuration(entry.durationMs)}${
-                        entry.fetchMs !== null ? ` / ${formatDuration(entry.fetchMs)}` : ''
-                      }`}
+                <td className="message" title={message}>
+                  {message}
                 </td>
+                <td title={duration || undefined}>{duration}</td>
                 <td className="filler" />
               </tr>
             )
