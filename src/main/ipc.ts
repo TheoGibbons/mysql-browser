@@ -14,7 +14,14 @@ import type {
 import { TOOL_SETTING_KEYS } from '@shared/types'
 import { Session, testConnection } from './db/session'
 import * as store from './store'
-import { cancelAllTools, cancelTool, detectTool, runTool, type ToolRunRequest } from './tools'
+import {
+  cancelAllTools,
+  cancelTool,
+  detectTool,
+  runTool,
+  toolVersion,
+  type ToolRunRequest
+} from './tools'
 import { check, getUpdateState, installNow } from './updater'
 
 /** Live sessions, keyed by connection *tab* id — several may share a connectionId. */
@@ -144,6 +151,7 @@ export function registerIpc(): void {
     return Object.keys(found).length > 0 ? store.setToolSettings(found) : settings
   })
   handle('tools:set', (patch: Partial<ToolSettings>) => store.setToolSettings(patch))
+  handle('tools:version', (toolPath: string) => toolVersion(toolPath))
 
   handle('tools:run', async (runId: string, config: ConnectionConfig, request: ToolRunRequest) => {
     await runTool(runId, config, request, await effectivePrefs(config), (event) =>

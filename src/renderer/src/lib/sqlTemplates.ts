@@ -37,6 +37,10 @@ export function dropTable(d: Dialect, schema: string, table: string): string {
   return `DROP TABLE ${qualify(d, schema, table)};`
 }
 
+export function dropView(d: Dialect, schema: string, view: string): string {
+  return `DROP VIEW ${qualify(d, schema, view)};`
+}
+
 export function truncateTable(d: Dialect, schema: string, table: string): string {
   return `TRUNCATE TABLE ${qualify(d, schema, table)};`
 }

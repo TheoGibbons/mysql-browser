@@ -107,6 +107,50 @@ export function detectTool(tool: ToolName): string {
   return ''
 }
 
+/**
+ * The version line reported by an external database tool. Keeping this probe in
+ * the main process lets the renderer inspect a user-selected executable without
+ * giving it general process-spawning access.
+ */
+export async function toolVersion(command: string): Promise<string> {
+  const executable = resolveExecutable(command)
+  const child = spawn(executable, ['--version'], {
+    windowsHide: true,
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+
+  let output = ''
+  const collect = (chunk: Buffer): void => {
+    // A version line is tiny; cap unexpected output from a misidentified tool.
+    if (output.length < 4096) output += chunk.toString('utf8').slice(0, 4096 - output.length)
+  }
+  child.stdout?.on('data', collect)
+  child.stderr?.on('data', collect)
+
+  return new Promise<string>((resolve, reject) => {
+    let settled = false
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      fn()
+    }
+    const timer = setTimeout(() => {
+      child.kill()
+      finish(() => reject(new Error(`Timed out reading the version from "${command}".`)))
+    }, 5000)
+
+    child.once('error', (err) => finish(() => reject(err)))
+    child.once('close', (code) =>
+      finish(() => {
+        const version = output.trim()
+        if (code === 0 && version) resolve(version)
+        else reject(new Error(version || `"${command}" exited with code ${code ?? '?'}.`))
+      })
+    )
+  })
+}
+
 /** Resolves a bare tool name against PATH, since spawning does not do it for us. */
 function resolveExecutable(command: string): string {
   if (command.includes('/') || command.includes('\\')) return command

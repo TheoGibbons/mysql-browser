@@ -66,6 +66,18 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 const CHARSETS = ['utf8mb4', 'utf8', 'latin1', 'binary']
 
+/** PostgreSQL changed major-version numbering from `9.6` to `10`. */
+function postgresMajor(version?: string): { label: string; order: number } | null {
+  const match = version?.match(/\b(\d+)(?:\.(\d+))?\b/)
+  if (!match) return null
+  const first = Number(match[1])
+  const second = Number(match[2] ?? 0)
+  if (!Number.isFinite(first) || !Number.isFinite(second)) return null
+  return first >= 10
+    ? { label: String(first), order: first * 100 }
+    : { label: `${first}.${second}`, order: first * 100 + second }
+}
+
 // ---------------------------------------------------------------------------
 
 /**
@@ -93,6 +105,7 @@ export function ExportImportTab({ conn, tab }: Props): JSX.Element {
   const running = run?.status === 'running'
   /** Set when Start needs an answer first: an import, or an overwrite. */
   const [confirming, setConfirming] = useState<'import' | 'overwrite' | null>(null)
+  const [pgDumpVersion, setPgDumpVersion] = useState('')
 
   // A tab saved before this feature existed has no transfer state. Building the
   // fallback once matters: rebuilding it every render would reset the tab's
@@ -142,6 +155,34 @@ export function ExportImportTab({ conn, tab }: Props): JSX.Element {
   const command = state.command || generated
   const blockedReason = running ? 'A run is already in progress.' : transferBlockedReason(ctx)
   const outputPath = outputPathOf(state, windows)
+
+  // A newer pg_dump can read an older server, but the resulting SQL is not
+  // guaranteed to load back into that server. Probe the actual selected binary
+  // instead of guessing from its path.
+  useEffect(() => {
+    if (!(isExport && engine === 'postgres' && state.toolPath && conn.serverVersion)) {
+      setPgDumpVersion('')
+      return
+    }
+    let current = true
+    setPgDumpVersion('')
+    void window.api.tools
+      .version(state.toolPath)
+      .then((version) => {
+        if (current) setPgDumpVersion(version)
+      })
+      // Version detection is advisory; a missing or unusual executable will
+      // still report its normal error if the user tries to run it.
+      .catch(() => undefined)
+    return () => {
+      current = false
+    }
+  }, [isExport, engine, state.toolPath, conn.serverVersion])
+
+  const pgDumpMajor = postgresMajor(pgDumpVersion)
+  const pgServerMajor = postgresMajor(conn.serverVersion)
+  const pgVersionWarning =
+    pgDumpMajor !== null && pgServerMajor !== null && pgDumpMajor.order > pgServerMajor.order
 
   /**
    * Back to the defaults, keeping the things that are not really settings: where
@@ -678,7 +719,7 @@ export function ExportImportTab({ conn, tab }: Props): JSX.Element {
           checked={state.pgSingleTransaction}
           disabled={running}
           onChange={(v) => patch({ pgSingleTransaction: v })}
-          hint="--single-transaction — all of it lands, or none of it does"
+          hint="--single-transaction — all of it lands, or none; turn off for dumps that create a database"
         />
         <Check
           label="Drop objects before creating them"
@@ -694,13 +735,28 @@ export function ExportImportTab({ conn, tab }: Props): JSX.Element {
           onChange={(v) => patch({ pgIfExists: v })}
           hint="--if-exists (pg_restore only)"
         />
-        <Check
-          label="Skip ownership"
-          checked={state.pgNoOwner}
-          disabled={running || !state.pgArchive}
-          onChange={(v) => patch({ pgNoOwner: v })}
-          hint="--no-owner (pg_restore only)"
-        />
+        {state.pgArchive ? (
+          <>
+            <Check
+              label="Skip ownership"
+              checked={state.pgNoOwner}
+              disabled={running}
+              onChange={(v) => patch({ pgNoOwner: v })}
+              hint="--no-owner"
+            />
+            <Check
+              label="Skip grants"
+              checked={state.pgNoPrivileges}
+              disabled={running}
+              onChange={(v) => patch({ pgNoPrivileges: v })}
+              hint="--no-privileges"
+            />
+          </>
+        ) : (
+          <div className="prefs-hint" style={{ margin: '4px 0 0' }}>
+            Ownership and grants in a plain SQL dump were decided when it was exported.
+          </div>
+        )}
       </fieldset>
     </>
   )
@@ -715,6 +771,13 @@ export function ExportImportTab({ conn, tab }: Props): JSX.Element {
 
   return (
     <div className="transfer">
+      {pgVersionWarning && (
+        <div className="banner warn">
+          pg_dump {pgDumpMajor?.label} is newer than PostgreSQL {pgServerMajor?.label}. The dump may
+          not restore to PostgreSQL {pgServerMajor?.label}; use pg_dump {pgServerMajor?.label} when
+          that is the destination.
+        </div>
+      )}
       {config.method === 'ssh' && (
         <div className="banner info">
           This connection tunnels over SSH, so the tool runs against a temporary local tunnel opened

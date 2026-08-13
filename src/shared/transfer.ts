@@ -302,8 +302,10 @@ export function defaultTransferState({
     pgCreate: false,
     pgInserts: 'copy',
     pgFormat: 'p',
-    pgNoOwner: false,
-    pgNoPrivileges: false,
+    // Portable by default: roles live at the cluster level and commonly differ
+    // between the source and destination even when the database name does not.
+    pgNoOwner: true,
+    pgNoPrivileges: true,
     pgVerbose: true,
 
     outputDir: settings.exportDirectory,
@@ -316,7 +318,10 @@ export function defaultTransferState({
       kind !== 'import' ? '' : engine === 'postgres' ? (config.database ?? '') : (preferred ?? ''),
     force: false,
     pgArchive: false,
-    pgSingleTransaction: false,
+    // A failed restore should leave no half-created schema or partially loaded
+    // data. Users can turn this off for scripts containing commands such as
+    // CREATE DATABASE, which PostgreSQL cannot run inside a transaction.
+    pgSingleTransaction: true,
     pgStopOnError: true,
 
     command: ''
@@ -526,6 +531,7 @@ export function buildPgImport(ctx: BuildContext): string {
     if (state.pgClean && state.pgIfExists) args.push('--if-exists')
     if (state.pgCreate) args.push('--create')
     if (state.pgNoOwner) args.push('--no-owner')
+    if (state.pgNoPrivileges) args.push('--no-privileges')
     if (state.pgSingleTransaction) args.push('--single-transaction')
     if (state.pgVerbose) args.push('--verbose')
     // pg_restore reads the archive from a positional argument; --file would be

@@ -39,7 +39,10 @@ export interface ConnTab {
   columnsCache: Record<string, string[]>
   expanded: Record<string, boolean>
   activeSchema: string | null
-  selectedNode: string | null
+  /** Selected object keys in the schema tree. */
+  selectedNodes: string[]
+  /** End point used when extending the schema-tree selection with Shift. */
+  selectionAnchor: string | null
   filter: string
   /** Lists the server's own schemas in the tree. Off by default, saved per connection. */
   showSystemSchemas: boolean
@@ -85,7 +88,7 @@ interface AppState {
   loadSchemaColumns(sessionId: string, schema: string): Promise<void>
   toggleExpanded(sessionId: string, key: string): void
   setSchemaFilter(sessionId: string, filter: string): void
-  setSelectedNode(sessionId: string, key: string | null): void
+  setSelectedNodes(sessionId: string, keys: string[], anchor?: string | null): void
   setActiveSchema(sessionId: string, schema: string | null): void
   setShowSystemSchemas(sessionId: string, show: boolean): void
 
@@ -237,7 +240,8 @@ export const useAppStore = create<AppState>((set, get) => {
         columnsCache: {},
         expanded: {},
         activeSchema: config.defaultSchema || null,
-        selectedNode: null,
+        selectedNodes: [],
+        selectionAnchor: null,
         filter: '',
         showSystemSchemas: false,
         tabs: [],
@@ -446,8 +450,12 @@ export const useAppStore = create<AppState>((set, get) => {
       patchConn(sessionId, (t) => ({ ...t, filter }))
     },
 
-    setSelectedNode(sessionId, key) {
-      patchConn(sessionId, (t) => ({ ...t, selectedNode: key }))
+    setSelectedNodes(sessionId, keys, anchor) {
+      patchConn(sessionId, (t) => ({
+        ...t,
+        selectedNodes: keys,
+        selectionAnchor: anchor === undefined ? t.selectionAnchor : anchor
+      }))
     },
 
     setActiveSchema(sessionId, schema) {

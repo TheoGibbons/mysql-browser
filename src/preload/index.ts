@@ -145,6 +145,8 @@ const api = {
     get: () => call<ToolSettings>('tools:get'),
     /** Merges a patch — a tab remembers one field without knowing the rest. */
     set: (patch: Partial<ToolSettings>) => call<ToolSettings>('tools:set', patch),
+    /** Runs the selected executable with `--version` and returns its version line. */
+    version: (toolPath: string) => call<string>('tools:version', toolPath),
     /**
      * Runs a dump/restore command. Resolves when the tool has exited; watch
      * `onEvent` for its output, progress and exit status.

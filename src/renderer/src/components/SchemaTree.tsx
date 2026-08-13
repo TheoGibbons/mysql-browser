@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import type { ConnTab } from '../store'
 import { useAppStore } from '../store'
 import { useContextMenu, type MenuEntry } from './ui/ContextMenu'
@@ -35,6 +36,10 @@ type Node =
     }
   | { kind: 'column'; key: string; schema: string; table: string; name: string; level: 2 }
 
+type SchemaNode = Extract<Node, { kind: 'schema' }>
+type TableNode = Extract<Node, { kind: 'table' }>
+type ColumnNode = Extract<Node, { kind: 'column' }>
+
 interface Props {
   conn: ConnTab
   /** Opens a tab; `run` is only ever true for read-only SQL. */
@@ -49,7 +54,8 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
     expanded,
     columnsCache,
     activeSchema,
-    selectedNode,
+    selectedNodes,
+    selectionAnchor,
     schemasLoading,
     showSystemSchemas,
     status
@@ -59,7 +65,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
   const toggleExpanded = useAppStore((s) => s.toggleExpanded)
   const refreshSchemas = useAppStore((s) => s.refreshSchemas)
   const loadSchemaColumns = useAppStore((s) => s.loadSchemaColumns)
-  const setSelectedNode = useAppStore((s) => s.setSelectedNode)
+  const setSelectedNodes = useAppStore((s) => s.setSelectedNodes)
   const setActiveSchema = useAppStore((s) => s.setActiveSchema)
   const setShowSystemSchemas = useAppStore((s) => s.setShowSystemSchemas)
   const runQuery = useAppStore((s) => s.runQuery)
@@ -151,6 +157,13 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
     return out
   }, [listed, needle, expanded, columnsCache])
 
+  const selectedKeys = useMemo(() => new Set(selectedNodes), [selectedNodes])
+
+  const selectedVisibleNodes = useMemo(
+    () => nodes.filter((node) => selectedKeys.has(node.key)),
+    [nodes, selectedKeys]
+  )
+
   const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
   const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN * 2
   const slice = nodes.slice(first, first + visibleCount)
@@ -214,124 +227,228 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
     })
   }
 
-  const schemaMenu = (schema: string): MenuEntry[] => [
-    { label: 'Set as Default Schema', onSelect: () => switchSchema(schema) },
-    { separator: true },
-    {
-      label: 'Copy to clipboard: name',
-      onSelect: () => copy(schema)
-    },
-    {
-      label: 'Copy to clipboard: create statement',
-      onSelect: async () => {
-        if (status === 'connected') {
-          try {
-            copy(await window.api.session.createStatement(sessionId, 'schema', schema))
-            return
-          } catch {
-            /* fall through to the template */
-          }
-        }
-        copy(T.createSchema(d, schema))
-      }
-    },
-    { separator: true },
-    { label: 'Create schema…', onSelect: () => openTab({ title: 'Create schema', sql: T.createSchema(d) }) },
-    {
-      label: 'Alter schema…',
-      onSelect: () => openTab({ title: `Alter ${schema}`, sql: T.alterSchema(d, schema) })
-    },
-    {
-      label: 'Drop schema…',
-      onSelect: () => openTab({ title: `Drop ${schema}`, sql: T.dropSchema(d, schema) })
-    },
-    { separator: true },
-    { label: 'Refresh', onSelect: () => void refreshSchemas(sessionId, true) }
-  ]
+  const schemaMenu = (node: SchemaNode, selection: Node[]): MenuEntry[] => {
+    const multiple = selection.length > 1
+    const targets = selection.filter((item): item is SchemaNode => item.kind === 'schema')
+    const compatible = targets.length === selection.length
+    const dropSql = targets.map((item) => T.dropSchema(d, item.name)).join('\n')
 
-  const tableMenu = (schema: string, table: string): MenuEntry[] => [
-    { label: 'Select Rows - Limit 1000', onSelect: () => selectRows(schema, table) },
-    { separator: true },
-    {
-      label: 'Copy to Clipboard',
-      submenu: [
-        { label: 'Name (short)', onSelect: () => copy(table) },
-        { label: 'Name (long)', onSelect: () => copy(`${schema}.${table}`) },
-        { separator: true },
-        {
-          label: 'Insert into statement',
-          onSelect: async () => copy(T.insertIntoTemplate(d, schema, table, await columnsFor(schema, table)))
-        },
-        {
-          label: 'Insert set statement',
-          onSelect: async () => copy(T.insertSetTemplate(d, schema, table, await columnsFor(schema, table)))
-        },
-        {
-          label: 'Update statement',
-          onSelect: async () => copy(T.updateTemplate(d, schema, table, await columnsFor(schema, table)))
-        },
-        {
-          label: 'Delete statement',
-          onSelect: async () => copy(T.deleteTemplate(d, schema, table, await columnsFor(schema, table)))
-        },
-        { separator: true },
-        {
-          label: 'Create statement',
-          onSelect: async () => {
-            if (status !== 'connected') return
+    return [
+      {
+        label: 'Set as Default Schema',
+        onSelect: () => switchSchema(node.name),
+        disabled: multiple
+      },
+      { separator: true },
+      {
+        label: 'Copy to clipboard: name',
+        onSelect: () => copy(node.name),
+        disabled: multiple
+      },
+      {
+        label: 'Copy to clipboard: create statement',
+        onSelect: async () => {
+          if (status === 'connected') {
             try {
-              copy(await window.api.session.createStatement(sessionId, 'table', schema, table))
+              copy(await window.api.session.createStatement(sessionId, 'schema', node.name))
+              return
             } catch {
-              /* nothing to copy */
+              /* fall through to the template */
             }
+          }
+          copy(T.createSchema(d, node.name))
+        },
+        disabled: multiple
+      },
+      { separator: true },
+      {
+        label: 'Create schema…',
+        onSelect: () => openTab({ title: 'Create schema', sql: T.createSchema(d) })
+      },
+      {
+        label: 'Alter schema…',
+        onSelect: () => openTab({ title: `Alter ${node.name}`, sql: T.alterSchema(d, node.name) }),
+        disabled: multiple
+      },
+      {
+        label: multiple && compatible ? `Drop ${targets.length} Schemas…` : 'Drop schema…',
+        onSelect: () =>
+          openTab({
+            title: multiple ? `Drop ${targets.length} schemas` : `Drop ${node.name}`,
+            sql: dropSql
+          }),
+        disabled: !compatible
+      },
+      { separator: true },
+      { label: 'Refresh', onSelect: () => void refreshSchemas(sessionId, true) }
+    ]
+  }
+
+  const tableMenu = (node: TableNode, selection: Node[]): MenuEntry[] => {
+    const multiple = selection.length > 1
+    const targets = selection.filter((item): item is TableNode => item.kind === 'table')
+    const compatible = targets.length === selection.length
+    const allTables = compatible && targets.every((item) => item.tableType === 'table')
+    const allViews = compatible && targets.every((item) => item.tableType === 'view')
+    const objectName = allTables ? 'Table' : allViews ? 'View' : 'Object'
+    const dropSql = targets
+      .map((item) =>
+        item.tableType === 'view'
+          ? T.dropView(d, item.schema, item.name)
+          : T.dropTable(d, item.schema, item.name)
+      )
+      .join('\n')
+    const truncateSql = targets
+      .map((item) => T.truncateTable(d, item.schema, item.name))
+      .join('\n')
+
+    return [
+      {
+        label: 'Select Rows - Limit 1000',
+        onSelect: () => selectRows(node.schema, node.name),
+        disabled: multiple
+      },
+      { separator: true },
+      {
+        label: 'Copy to Clipboard',
+        disabled: multiple,
+        submenu: [
+          { label: 'Name (short)', onSelect: () => copy(node.name) },
+          { label: 'Name (long)', onSelect: () => copy(`${node.schema}.${node.name}`) },
+          { separator: true },
+          {
+            label: 'Insert into statement',
+            onSelect: async () =>
+              copy(T.insertIntoTemplate(d, node.schema, node.name, await columnsFor(node.schema, node.name)))
           },
-          disabled: status !== 'connected'
-        }
-      ]
-    },
-    { separator: true },
-    {
-      label: 'Create Table…',
-      onSelect: () =>
-        openTab({ title: 'New table', kind: 'designer', designer: emptyDesigner(schema, engine) })
-    },
-    {
-      label: 'Alter Table…',
-      onSelect: () => void openAlterTable(schema, table),
-      disabled: status !== 'connected'
-    },
-    {
-      label: 'Drop Table…',
-      onSelect: () => openTab({ title: `Drop ${table}`, sql: T.dropTable(d, schema, table) })
-    },
-    {
-      label: 'Truncate Table…',
-      onSelect: () => openTab({ title: `Truncate ${table}`, sql: T.truncateTable(d, schema, table) })
-    },
-    { separator: true },
-    { label: 'Refresh', onSelect: () => void refreshSchemas(sessionId, true) }
-  ]
+          {
+            label: 'Insert set statement',
+            onSelect: async () =>
+              copy(T.insertSetTemplate(d, node.schema, node.name, await columnsFor(node.schema, node.name)))
+          },
+          {
+            label: 'Update statement',
+            onSelect: async () =>
+              copy(T.updateTemplate(d, node.schema, node.name, await columnsFor(node.schema, node.name)))
+          },
+          {
+            label: 'Delete statement',
+            onSelect: async () =>
+              copy(T.deleteTemplate(d, node.schema, node.name, await columnsFor(node.schema, node.name)))
+          },
+          { separator: true },
+          {
+            label: 'Create statement',
+            onSelect: async () => {
+              if (status !== 'connected') return
+              try {
+                copy(await window.api.session.createStatement(sessionId, 'table', node.schema, node.name))
+              } catch {
+                /* nothing to copy */
+              }
+            },
+            disabled: status !== 'connected'
+          }
+        ]
+      },
+      { separator: true },
+      {
+        label: 'Create Table…',
+        onSelect: () =>
+          openTab({ title: 'New table', kind: 'designer', designer: emptyDesigner(node.schema, engine) })
+      },
+      {
+        label: 'Alter Table…',
+        onSelect: () => void openAlterTable(node.schema, node.name),
+        disabled: multiple || status !== 'connected'
+      },
+      {
+        label:
+          multiple && compatible
+            ? `Drop ${targets.length} ${objectName}s…`
+            : `Drop ${objectName}…`,
+        onSelect: () =>
+          openTab({
+            title: multiple ? `Drop ${targets.length} ${objectName.toLowerCase()}s` : `Drop ${node.name}`,
+            sql: dropSql
+          }),
+        disabled: !compatible
+      },
+      {
+        label: multiple && allTables ? `Truncate ${targets.length} Tables…` : 'Truncate Table…',
+        onSelect: () =>
+          openTab({
+            title: multiple ? `Truncate ${targets.length} tables` : `Truncate ${node.name}`,
+            sql: truncateSql
+          }),
+        disabled: !allTables
+      },
+      { separator: true },
+      { label: 'Refresh', onSelect: () => void refreshSchemas(sessionId, true) }
+    ]
+  }
 
-  const columnMenu = (schema: string, table: string, column: string): MenuEntry[] => [
-    { label: 'Copy column name', onSelect: () => copy(column) },
-    {
-      label: 'Copy qualified name',
-      onSelect: () => copy(`${qualify(d, schema, table)}.${d.quoteIdent(column)}`)
-    },
-    { separator: true },
-    {
-      label: `SELECT ${column} FROM ${table}`,
-      onSelect: () =>
-        openTab({
-          title: table,
-          sql: `SELECT ${d.quoteIdent(column)} FROM ${qualify(d, schema, table)} LIMIT 1000;`,
-          run: true
-        })
+  const columnMenu = (node: ColumnNode, selection: Node[]): MenuEntry[] => {
+    const multiple = selection.length > 1
+
+    return [
+      { label: 'Copy column name', onSelect: () => copy(node.name), disabled: multiple },
+      {
+        label: 'Copy qualified name',
+        onSelect: () => copy(`${qualify(d, node.schema, node.table)}.${d.quoteIdent(node.name)}`),
+        disabled: multiple
+      },
+      { separator: true },
+      {
+        label: `SELECT ${node.name} FROM ${node.table}`,
+        onSelect: () =>
+          openTab({
+            title: node.table,
+            sql: `SELECT ${d.quoteIdent(node.name)} FROM ${qualify(d, node.schema, node.table)} LIMIT 1000;`,
+            run: true
+          }),
+        disabled: multiple
+      }
+    ]
+  }
+
+  const onNodeClick = (node: Node, event: ReactMouseEvent<HTMLDivElement>): void => {
+    const additive = event.ctrlKey || event.metaKey
+
+    if (event.shiftKey) {
+      const anchor = selectionAnchor ?? selectedNodes[0] ?? node.key
+      const anchorIndex = nodes.findIndex((item) => item.key === anchor)
+      const nodeIndex = nodes.findIndex((item) => item.key === node.key)
+
+      if (anchorIndex === -1 || nodeIndex === -1) {
+        setSelectedNodes(sessionId, [node.key], node.key)
+        return
+      }
+
+      const start = Math.min(anchorIndex, nodeIndex)
+      const end = Math.max(anchorIndex, nodeIndex)
+      const rangeNodes = nodes.slice(start, end + 1)
+      // A table range should not accidentally absorb expanded columns (and a
+      // schema range should not absorb all of its children).
+      const selectedRange =
+        nodes[anchorIndex].kind === node.kind
+          ? rangeNodes.filter((item) => item.kind === node.kind)
+          : rangeNodes
+      const range = selectedRange.map((item) => item.key)
+      const next = additive ? Array.from(new Set([...selectedNodes, ...range])) : range
+      setSelectedNodes(sessionId, next, anchor)
+      return
     }
-  ]
 
-  const onNodeClick = (node: Node): void => {
-    setSelectedNode(sessionId, node.key)
+    if (additive) {
+      const next = selectedKeys.has(node.key)
+        ? selectedNodes.filter((key) => key !== node.key)
+        : [...selectedNodes, node.key]
+      setSelectedNodes(sessionId, next, node.key)
+      return
+    }
+
+    setSelectedNodes(sessionId, [node.key], node.key)
     if (node.kind === 'schema') {
       toggleExpanded(sessionId, node.key)
       void loadSchemaColumns(sessionId, node.name)
@@ -339,6 +456,14 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
       toggleExpanded(sessionId, node.key)
       void loadSchemaColumns(sessionId, node.schema)
     }
+  }
+
+  const selectionForContextMenu = (node: Node): Node[] => {
+    if (!selectedKeys.has(node.key)) {
+      setSelectedNodes(sessionId, [node.key], node.key)
+      return [node]
+    }
+    return selectedVisibleNodes
   }
 
   const onNodeDoubleClick = (node: Node): void => {
@@ -373,6 +498,8 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
       <div
         className="tree"
         ref={scrollRef}
+        role="tree"
+        aria-multiselectable="true"
         onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
       >
         {nodes.length === 0 ? (
@@ -393,16 +520,18 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
               {slice.map((node) => (
                 <div
                   key={node.key}
-                  className={`tree-node${selectedNode === node.key ? ' selected' : ''}`}
+                  className={`tree-node${selectedKeys.has(node.key) ? ' selected' : ''}`}
                   style={{ paddingLeft: 2 + node.level * 14 }}
-                  onClick={() => onNodeClick(node)}
+                  role="treeitem"
+                  aria-selected={selectedKeys.has(node.key)}
+                  onClick={(e) => onNodeClick(node, e)}
                   onDoubleClick={() => onNodeDoubleClick(node)}
                   onContextMenu={(e) => {
                     e.preventDefault()
-                    setSelectedNode(sessionId, node.key)
-                    if (node.kind === 'schema') menu.show(e, schemaMenu(node.name))
-                    else if (node.kind === 'table') menu.show(e, tableMenu(node.schema, node.name))
-                    else menu.show(e, columnMenu(node.schema, node.table, node.name))
+                    const selection = selectionForContextMenu(node)
+                    if (node.kind === 'schema') menu.show(e, schemaMenu(node, selection))
+                    else if (node.kind === 'table') menu.show(e, tableMenu(node, selection))
+                    else menu.show(e, columnMenu(node, selection))
                   }}
                   title={node.kind === 'column' ? node.name : node.key}
                 >
@@ -440,7 +569,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
                       <button
                         className="icon-btn"
                         title="Alter table"
-                        disabled={status !== 'connected'}
+                        disabled={selectedNodes.length > 1 || status !== 'connected'}
                         onClick={() => void openAlterTable(node.schema, node.name)}
                       >
                         <SettingsIcon />
@@ -448,6 +577,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
                       <button
                         className="icon-btn"
                         title="Select rows - limit 1000"
+                        disabled={selectedNodes.length > 1}
                         onClick={() => selectRows(node.schema, node.name)}
                       >
                         <QueryIcon />
