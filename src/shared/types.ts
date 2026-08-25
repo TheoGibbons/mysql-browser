@@ -574,6 +574,22 @@ export interface SessionStatusEvent {
 }
 
 // ---------------------------------------------------------------------------
+// About
+// ---------------------------------------------------------------------------
+
+/**
+ * What the About dialog shows. The runtime versions ride along with the app's
+ * own because they are the first thing worth knowing about a bug report.
+ */
+export interface AppInfo {
+  /** The app's own version, straight from package.json. */
+  version: string
+  electron: string
+  chrome: string
+  node: string
+}
+
+// ---------------------------------------------------------------------------
 // Updates
 // ---------------------------------------------------------------------------
 

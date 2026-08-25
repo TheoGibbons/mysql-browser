@@ -1,6 +1,6 @@
 /** IPC surface exposed to the renderer through the preload bridge. */
 
-import { BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import type {
   ConnectionConfig,
   ConnectionGroup,
@@ -300,6 +300,15 @@ export function registerIpc(): void {
   handle('updates:get', () => getUpdateState())
   handle('updates:check', () => check())
   handle('updates:install', () => installNow())
+
+  // --- about -------------------------------------------------------------
+
+  handle('app:info', () => ({
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    chrome: process.versions.chrome,
+    node: process.versions.node
+  }))
 }
 
 /**

@@ -1401,6 +1401,38 @@ textarea.field {
   background: var(--bg-hover);
 }
 
+/* --- about box --- */
+
+.about {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 0 8px;
+  text-align: center;
+  /* The version is worth copying into a bug report, unlike most of the UI. */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.about-name {
+  font-size: 16px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.about-version {
+  color: var(--text-dim);
+  /* Reserves the line's height while the version is still being fetched. */
+  min-height: 1.35em;
+}
+
+.about-runtime {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  margin-top: 4px;
+}
+
 .home-head {
   display: flex;
   align-items: center;

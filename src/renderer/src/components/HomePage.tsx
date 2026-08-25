@@ -3,6 +3,7 @@ import type { ConnectionConfig, ConnectionGroup } from '@shared/types'
 import { useAppStore } from '../store'
 import { useContextMenu } from './ui/ContextMenu'
 import { ExportIcon, ImportIcon, NewGroupIcon, PlusIcon, SearchIcon } from './ui/Icons'
+import { AboutDialog } from './AboutDialog'
 import { ConnectionDialog } from './ConnectionDialog'
 import { ExportOptionsDialog, ImportPassphraseDialog } from './PassphraseDialogs'
 import { Marquee } from './ui/Marquee'
@@ -312,6 +313,7 @@ export function HomePage(): JSX.Element {
   const [confirmDeleteGroup, setConfirmDeleteGroup] = useState<ConnectionGroup | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [exportPrompt, setExportPrompt] = useState(false)
+  const [about, setAbout] = useState(false)
   /** Set when the chosen import file carries passwords and needs a passphrase. */
   const [importPrompt, setImportPrompt] = useState<{
     payload: ImportPayload
@@ -832,6 +834,10 @@ export function HomePage(): JSX.Element {
       )}
 
       <div className="home-foot">
+        <button className="btn" title="Version and build details" onClick={() => setAbout(true)}>
+          About
+        </button>
+        <div className="spacer" />
         <ImportExportMenu
           onExport={() => setExportPrompt(true)}
           onImport={() => void importConnections()}
@@ -852,6 +858,8 @@ export function HomePage(): JSX.Element {
           }}
         />
       )}
+
+      {about && <AboutDialog onClose={() => setAbout(false)} />}
 
       {exportPrompt && (
         <ExportOptionsDialog

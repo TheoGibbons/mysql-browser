@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AppInfo,
   ConnectionConfig,
   ConnectionGroup,
   ConnectionSecretsEnvelope,
@@ -188,6 +189,11 @@ const api = {
     install: () => call<boolean>('updates:install'),
     onState: (handler: (state: UpdateState) => void) =>
       subscribe<UpdateState>('updates:state', handler)
+  },
+
+  app: {
+    /** The running build's version, plus the runtime it sits on. */
+    info: () => call<AppInfo>('app:info')
   }
 }
 
