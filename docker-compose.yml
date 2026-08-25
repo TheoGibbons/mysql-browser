@@ -13,8 +13,10 @@ services:
     restart: unless-stopped
     expose:
       - '80'
+    # 127.0.0.1, not localhost: busybox wget tries the ::1 record first and
+    # nginx listens on IPv4 only, so `localhost` is a guaranteed refusal.
     healthcheck:
-      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost/healthz']
+      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1/healthz']
       interval: 10s
       timeout: 3s
       retries: 5
