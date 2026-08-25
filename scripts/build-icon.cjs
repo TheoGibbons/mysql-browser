@@ -1,5 +1,7 @@
 /**
- * Rasterises resources/icon.svg into the app icons electron-builder ships.
+ * Rasterises resources/icon.svg into the app icons electron-builder ships, and
+ * copies the same artwork into the marketing site as its favicon and link-preview
+ * image.
  *
  * Run with `npm run icon`. Chromium (via Electron, already a dev dependency) does
  * the rasterising, so no image library is needed. The SVG is re-encoded at each
@@ -15,6 +17,13 @@ const ROOT = path.join(__dirname, '..')
 const SVG = path.join(ROOT, 'resources', 'icon.svg')
 const ICO = path.join(ROOT, 'resources', 'icon.ico')
 const PNG = path.join(ROOT, 'resources', 'icon.png')
+
+// The site's Docker build context is ./site, so its Dockerfile cannot reach
+// resources/. The favicons are therefore generated copies committed under
+// site/public/ rather than something the image build pulls in.
+const SITE_SVG = path.join(ROOT, 'site', 'public', 'favicon.svg')
+const SITE_ICO = path.join(ROOT, 'site', 'public', 'favicon.ico')
+const SITE_OG = path.join(ROOT, 'site', 'public', 'og-image.png')
 
 /** Sizes Windows picks between: taskbar, Explorer views, and the installer. */
 const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
@@ -87,8 +96,18 @@ app.whenReady().then(async () => {
   fs.writeFileSync(ICO, buildIco(images))
   fs.writeFileSync(PNG, await render(win, svg, 512))
 
+  // Vector for browsers that take an SVG favicon; the .ico is the automatic
+  // /favicon.ico fallback for those that don't, so the page needs no extra tag.
+  fs.writeFileSync(SITE_SVG, svg)
+  fs.copyFileSync(ICO, SITE_ICO)
+
+  // og:image. The 512px square is what the page advertises, so its dimensions
+  // are hardcoded in the og:image:width/height tags — change one, change both.
+  fs.copyFileSync(PNG, SITE_OG)
+
   console.log(`icon.ico  ${ICO_SIZES.join(', ')}px  (${fs.statSync(ICO).size} bytes)`)
   console.log(`icon.png  512px            (${fs.statSync(PNG).size} bytes)`)
+  console.log(`site/public/favicon.svg + favicon.ico + og-image.png`)
 
   win.destroy()
   app.quit()
