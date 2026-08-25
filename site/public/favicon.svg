@@ -16,7 +16,7 @@
     <path d="M70 78 L70 178" />
     <path d="M186 78 L186 178" />
     <path d="M70 178 A58 22 0 0 0 186 178" />
-    <path d="M70 122 A58 22 0 0 0 186 122" />
+    <path d="M70 125 A58 22 0 0 0 186 125"/>
   </g>
-  <ellipse cx="128" cy="78" rx="58" ry="22" fill="#ffffff"/>
+  <ellipse cx="128" cy="78" rx="64" ry="22" fill="#ffffff"/>
 </svg>
