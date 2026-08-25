@@ -1,0 +1,8 @@
+# Production-only differences: TLS on the websecure entry point. Everything
+# else is identical to the local Traefik mode.
+services:
+  site:
+    labels:
+      traefik.http.routers.mysql-browser-site.entrypoints: websecure
+      traefik.http.routers.mysql-browser-site.tls: 'true'
+      traefik.http.routers.mysql-browser-site.tls.certresolver: letsencrypt

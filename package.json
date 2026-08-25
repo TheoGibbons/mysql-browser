@@ -59,6 +59,7 @@
       "!node_modules/nan/**"
     ],
     "npmRebuild": false,
+    "artifactName": "MySQL-Browser-Setup-${version}.${ext}",
     "win": {
       "target": [
         "nsis"
@@ -74,8 +75,9 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "SET-YOUR-GITHUB-USERNAME",
-      "repo": "mysql-browser"
+      "owner": "TheoGibbons",
+      "repo": "mysql-browser",
+      "releaseType": "release"
     }
   },
   "allowScripts": {

@@ -1,0 +1,8 @@
+# Loaded automatically by a plain `docker compose` command, and deliberately
+# left out of the explicit -f lists the Traefik modes use. Defaults to loopback
+# so a local checkout publishes nothing; standalone LIVE widens it by setting
+# SITE_BIND=0.0.0.0 and SITE_PORT=80 in .env.
+services:
+  site:
+    ports:
+      - '${SITE_BIND:-127.0.0.1}:${SITE_PORT:-3084}:80'

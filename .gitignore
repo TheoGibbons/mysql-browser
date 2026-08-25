@@ -13,3 +13,6 @@ scratch-*
 
 # Reference screenshots — not part of the source tree
 ref_images/
+
+# Real environment files, including secrets. Only the *.example ones are tracked.
+.env

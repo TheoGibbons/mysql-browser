@@ -1,0 +1,85 @@
+# Builds the Windows installer and publishes it to GitHub Releases.
+#
+# The release it produces is what BOTH consumers read:
+#   - the marketing site's download button, via the releases API
+#   - the installed app's auto-updater, via the latest.yml that
+#     electron-builder uploads alongside the .exe
+#
+# Driven by tags, not by pushes to main, so the version in package.json is the
+# thing that decides what a release is called.
+name: Release Windows installer
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: mysql-browser-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # electron-builder creates the release and uploads assets
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # electron-builder names the installer and writes latest.yml from the
+      # version in package.json, while the release is named after the tag. If
+      # they disagree, the release reads v0.2.0 and the updater still offers
+      # 0.1.0, which is confusing in exactly the place nobody looks. Fail here
+      # instead, before anything is built.
+      - name: Check the tag matches package.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [[ "$tag" != "$pkg" ]]; then
+            echo "Tag $GITHUB_REF_NAME implies version $tag but package.json says $pkg." >&2
+            echo "Bump package.json, commit, then retag." >&2
+            exit 1
+          fi
+          echo "Releasing version $pkg"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Split on the trigger, because `npm run release` passes
+      # `--publish always` — which publishes whether or not a tag exists. On a
+      # workflow_dispatch that would cut a real release named after whatever
+      # package.json currently says, from an arbitrary commit. Dispatch runs
+      # therefore build the installer without publishing, and pick it up from
+      # the workflow artifact below.
+      - name: Build and publish
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run release
+
+      - name: Build without publishing
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: npm run dist:installer
+
+      # The only way to get at a dispatch build, and a useful record of a
+      # tagged one.
+      - name: Upload installer as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mysql-browser-installer
+          path: |
+            release/*.exe
+            release/latest.yml
+          if-no-files-found: warn
+          retention-days: 14

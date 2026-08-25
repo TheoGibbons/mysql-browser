@@ -1,0 +1,21 @@
+# The marketing site only. The desktop application itself is not a service and
+# is not built here — it ships as a Windows installer from GitHub Releases.
+#
+# Proxy-agnostic on purpose: no Traefik labels, no external network, no
+# hostname and no TLS. `docker compose up -d --build` works on a machine that
+# has never heard of hobby-traefik.
+name: mysql-browser-site
+
+services:
+  site:
+    build:
+      context: ./site
+    restart: unless-stopped
+    expose:
+      - '80'
+    healthcheck:
+      test: ['CMD', 'wget', '--spider', '-q', 'http://localhost/healthz']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

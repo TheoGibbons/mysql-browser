@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MySQL Browser — a parallel MySQL client for Windows</title>
+<meta name="description" content="A fast, parallel MySQL browser for Windows. Every connection tab and every query tab runs on its own thread, so a slow query never blocks the UI.">
+<meta property="og:title" content="MySQL Browser">
+<meta property="og:description" content="A fast, parallel MySQL browser for Windows. A slow query in one tab never blocks another.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗃️</text></svg>">
+<style>
+  :root {
+    --bg: #ffffff; --bg-soft: #f6f7f9; --fg: #16181d; --fg-muted: #5b6270;
+    --line: #e3e6ea; --accent: #0b6bcb; --accent-fg: #ffffff; --code-bg: #f0f2f5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --bg-soft: #161920; --fg: #e8eaed; --fg-muted: #9aa3b2;
+      --line: #262b35; --accent: #4c9aff; --accent-fg: #0b1220; --code-bg: #161920;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 24px; }
+  header { padding: 84px 0 56px; text-align: center; }
+  h1 { font-size: clamp(2.2rem, 6vw, 3.4rem); line-height: 1.1; margin: 0 0 16px; letter-spacing: -0.02em; }
+  .tag { font-size: clamp(1.05rem, 2.4vw, 1.3rem); color: var(--fg-muted); margin: 0 auto 36px; max-width: 620px; }
+  .cta { display: inline-flex; align-items: center; gap: 10px; background: var(--accent); color: var(--accent-fg);
+         text-decoration: none; font-weight: 600; padding: 15px 30px; border-radius: 10px; font-size: 1.05rem; }
+  .cta:hover { filter: brightness(1.08); }
+  .meta { margin-top: 14px; font-size: 0.88rem; color: var(--fg-muted); }
+  .meta a { color: var(--fg-muted); }
+  section { padding: 40px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 1.5rem; margin: 0 0 24px; letter-spacing: -0.01em; }
+  .grid { display: grid; gap: 22px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .card { background: var(--bg-soft); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+  .card h3 { margin: 0 0 8px; font-size: 1.03rem; }
+  .card p { margin: 0; color: var(--fg-muted); font-size: 0.94rem; }
+  .lead { color: var(--fg-muted); max-width: 700px; margin: -8px 0 26px; }
+  code { background: var(--code-bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; font-size: 0.88em; }
+  footer { padding: 40px 0 64px; border-top: 1px solid var(--line); color: var(--fg-muted); font-size: 0.88rem;
+           display: flex; flex-wrap: wrap; gap: 14px; justify-content: space-between; }
+  footer a { color: var(--fg-muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>MySQL Browser</h1>
+    <p class="tag">A stripped-down MySQL client for Windows whose defining feature is parallelism — a slow query in one tab never blocks another.</p>
+    <a class="cta" id="download" href="https://github.com/TheoGibbons/mysql-browser/releases/latest">
+      <span id="download-label">Download for Windows</span>
+    </a>
+    <p class="meta">
+      <span id="release-meta">Free and open source, MIT licensed</span> ·
+      <a href="https://github.com/TheoGibbons/mysql-browser">Source on GitHub</a>
+    </p>
+  </header>
+
+  <section>
+    <h2>Every tab runs on its own thread</h2>
+    <p class="lead">Most clients multiplex your tabs onto one connection, so the slow <code>SELECT</code> you kicked off five minutes ago freezes everything behind it. This one spawns a worker thread per connection and holds a separate MySQL connection per query tab. Socket reads and row parsing happen off the UI thread entirely.</p>
+    <div class="grid">
+      <div class="card"><h3>Parallel queries</h3><p>Two tabs on the same connection execute at the same time. The UI stays responsive while a long query runs.</p></div>
+      <div class="card"><h3>SSH tunnels and IAM</h3><p>Connect over TCP, through an SSH tunnel, or with AWS IAM auth tokens — refreshed automatically before the 15-minute expiry.</p></div>
+      <div class="card"><h3>Sessions survive restarts</h3><p>Open tabs, their result grids, schema cache and layout are written per tab and restored next time you open the connection — offline included.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Built for everyday schema work</h2>
+    <div class="grid">
+      <div class="card"><h3>Schema-aware SQL editor</h3><p>CodeMirror 6 with completion that knows your tables and columns, search, and formatting.</p></div>
+      <div class="card"><h3>Editable result grid</h3><p>Virtualized for large results. Edit cells, review the generated SQL, then apply or revert.</p></div>
+      <div class="card"><h3>Table designer</h3><p>Create and alter tables through a form that shows you the exact DDL before anything runs.</p></div>
+      <div class="card"><h3>Import and export</h3><p>Drives <code>mysqldump</code> and <code>mysql</code> directly, with the command it builds shown in full.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>It never changes your database behind your back</h2>
+    <p class="lead">Drop, truncate, alter and grid-apply do not execute when you click them. They open a new tab pre-loaded with the SQL, or show you a copyable confirmation — you run it. The only statements that execute on their own are the ones you typed and ran yourself, plus <code>USE</code> and the explicit "select rows, limit 1000" button.</p>
+    <p class="lead">Connection passwords and SSH secrets are encrypted at rest with Windows DPAPI, and updates install quietly in the background when you next close the app.</p>
+  </section>
+
+  <footer>
+    <span>MIT licensed · Windows 10 and 11 · <span id="footer-version">unsigned installer, see the README</span></span>
+    <span><a href="https://github.com/TheoGibbons/mysql-browser">GitHub</a> · <a href="https://github.com/TheoGibbons/mysql-browser/releases">All releases</a></span>
+  </footer>
+
+</div>
+
+<script>
+// The installer filename carries its version, so there is no fixed
+// /releases/latest/download/ URL to hard-code. Resolve the real asset at page
+// load and upgrade the button; the href above already points somewhere useful
+// if this fails, so the page works with the API blocked or rate-limited.
+(function () {
+  var REPO = 'TheoGibbons/mysql-browser';
+  fetch('https://api.github.com/repos/' + REPO + '/releases/latest', {
+    headers: { Accept: 'application/vnd.github+json' }
+  })
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+    .then(function (release) {
+      var exe = (release.assets || []).filter(function (a) {
+        return /\.exe$/i.test(a.name);
+      })[0];
+      if (!exe) return;
+      document.getElementById('download').href = exe.browser_download_url;
+      document.getElementById('download-label').textContent =
+        'Download for Windows — ' + release.tag_name;
+      var mb = (exe.size / 1048576).toFixed(0);
+      document.getElementById('release-meta').textContent =
+        mb + ' MB · free and open source, MIT licensed';
+    })
+    .catch(function () { /* keep the releases-page fallback */ });
+})();
+</script>
+</body>
+</html>

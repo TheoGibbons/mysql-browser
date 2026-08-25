@@ -1,4 +1,16 @@
-# Normalise to LF in the repository; the working tree keeps the platform default.
+# Windows checkouts must not rewrite these to CRLF. Every tracked file here is
+# read by bash on Ubuntu or by a Linux container, where a CR is a syntax error
+# rather than whitespace.
 * text=auto eol=lf
+
+# Explicit for the files that actually break, so Git's text/binary heuristic is
+# never in the loop for them.
+*.sh text eol=lf
+
+# The heuristic's real failure mode is calling a binary "text" and mangling it.
 *.png binary
+*.jpg binary
 *.ico binary
+*.exe binary
+*.gz binary
+*.zip binary
