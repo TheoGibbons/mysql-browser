@@ -28,6 +28,19 @@ export function alterSchema(
   return `ALTER SCHEMA ${d.quoteIdent(name)}  DEFAULT CHARACTER SET ${charset}  DEFAULT COLLATE ${collation} ;`
 }
 
+/**
+ * Wraps generated DROP statements in foreign-key toggles, left commented out.
+ *
+ * Dropping in the wrong order trips MySQL's referential checks, so the escape
+ * hatch is put right where it is needed — but commented, because suspending the
+ * checks is the user's call, not ours. Postgres has no session-wide equivalent,
+ * so its SQL comes back untouched.
+ */
+export function withForeignKeyChecks(d: Dialect, sql: string): string {
+  if (d.engine !== 'mysql') return sql
+  return `# SET FOREIGN_KEY_CHECKS = 0;\n${sql}\n# SET FOREIGN_KEY_CHECKS = 1;`
+}
+
 export function dropSchema(d: Dialect, name: string): string {
   const keyword = d.engine === 'postgres' ? 'SCHEMA' : 'DATABASE'
   return `DROP ${keyword} ${d.quoteIdent(name)};`

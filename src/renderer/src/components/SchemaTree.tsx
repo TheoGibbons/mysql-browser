@@ -231,7 +231,10 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
     const multiple = selection.length > 1
     const targets = selection.filter((item): item is SchemaNode => item.kind === 'schema')
     const compatible = targets.length === selection.length
-    const dropSql = targets.map((item) => T.dropSchema(d, item.name)).join('\n')
+    const dropSql = T.withForeignKeyChecks(
+      d,
+      targets.map((item) => T.dropSchema(d, item.name)).join('\n')
+    )
 
     return [
       {
@@ -291,13 +294,16 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
     const allTables = compatible && targets.every((item) => item.tableType === 'table')
     const allViews = compatible && targets.every((item) => item.tableType === 'view')
     const objectName = allTables ? 'Table' : allViews ? 'View' : 'Object'
-    const dropSql = targets
-      .map((item) =>
-        item.tableType === 'view'
-          ? T.dropView(d, item.schema, item.name)
-          : T.dropTable(d, item.schema, item.name)
-      )
-      .join('\n')
+    const dropSql = T.withForeignKeyChecks(
+      d,
+      targets
+        .map((item) =>
+          item.tableType === 'view'
+            ? T.dropView(d, item.schema, item.name)
+            : T.dropTable(d, item.schema, item.name)
+        )
+        .join('\n')
+    )
     const truncateSql = targets
       .map((item) => T.truncateTable(d, item.schema, item.name))
       .join('\n')
