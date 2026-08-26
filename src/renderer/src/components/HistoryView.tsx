@@ -27,9 +27,39 @@ function relativeTime(from: number, now: number): string {
   return days === 1 ? '1 day ago' : `${days} days ago`
 }
 
+/** Round to `digits` significant figures, e.g. 32.761 -> 33, 0.678 -> 0.68. */
+function sigFig(value: number, digits: number): number {
+  if (value === 0) return 0
+  const factor = Math.pow(10, digits - 1 - Math.floor(Math.log10(Math.abs(value))))
+  return Math.round(value * factor) / factor
+}
+
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? '' : 's'}`
+}
+
+/** `12.345 sec` under a minute, then the two largest units — `59 mins 33 secs`, `2 days 12 hrs`. */
 function formatDuration(ms: number | null): string {
   if (ms === null) return ''
-  return `${(ms / 1000).toFixed(3)} sec`
+
+  const totalSeconds = ms / 1000
+  if (totalSeconds < 60) return `${totalSeconds.toFixed(3)} sec`
+
+  const rounded = Math.round(totalSeconds)
+  const years = Math.floor(rounded / 31536000)
+  const months = Math.floor((rounded % 31536000) / 2628000)
+  const weeks = Math.floor((rounded % 2628000) / 604800)
+  const days = Math.floor((rounded % 604800) / 86400)
+  const hours = Math.floor((rounded % 86400) / 3600)
+  const minutes = Math.floor((rounded % 3600) / 60)
+  const seconds = sigFig(totalSeconds % 60, 2)
+
+  if (years) return plural(years, 'year') + (months ? ` ${plural(months, 'month')}` : '')
+  if (months) return plural(months, 'month') + (weeks ? ` ${plural(weeks, 'week')}` : '')
+  if (weeks) return plural(weeks, 'week') + (days ? ` ${plural(days, 'day')}` : '')
+  if (days) return plural(days, 'day') + (hours ? ` ${plural(hours, 'hr')}` : '')
+  if (hours) return plural(hours, 'hr') + (minutes ? ` ${plural(minutes, 'min')}` : '')
+  return plural(minutes, 'min') + (seconds >= 1 ? ` ${plural(seconds, 'sec')}` : '')
 }
 
 interface Props {
