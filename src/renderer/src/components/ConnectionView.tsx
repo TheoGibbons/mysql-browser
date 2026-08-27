@@ -202,11 +202,21 @@ export function ConnectionView({ conn }: Props): JSX.Element {
       } else if (lower === 'r' && e.shiftKey) {
         e.preventDefault()
         void reconnect(sessionId)
+      } else if (e.key === 'Tab' && tabs.length > 0) {
+        e.preventDefault()
+        const currentIndex = tabs.findIndex((tab) => tab.id === activeTabId)
+        const nextIndex =
+          currentIndex < 0
+            ? e.shiftKey
+              ? tabs.length - 1
+              : 0
+            : (currentIndex + (e.shiftKey ? -1 : 1) + tabs.length) % tabs.length
+        setActiveTab(sessionId, tabs[nextIndex].id)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [activeTabId, closeTab, newTab, reconnect, sessionId])
+  }, [activeTabId, closeTab, newTab, reconnect, sessionId, setActiveTab, tabs])
 
   // Drop grid state for tabs that no longer exist.
   useEffect(() => {
@@ -553,7 +563,7 @@ function TabContent({
 
   return (
     <>
-      <div className="pane fill">
+      <div className="pane fill query-editor-pane">
         <div className="pane-head">
           <button
             className="toolbar-btn"

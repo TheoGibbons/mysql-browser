@@ -37,6 +37,29 @@ export function QueryTabsBar({
     el?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
   }, [activeTabId])
 
+  // A vertical mouse wheel is the most convenient way to navigate a tab strip.
+  // Keep native horizontal trackpad gestures intact and translate only the
+  // vertical component when the strip actually overflows.
+  useEffect(() => {
+    const bar = barRef.current
+    if (!bar) return
+
+    const onWheel = (event: WheelEvent): void => {
+      if (
+        bar.scrollWidth <= bar.clientWidth ||
+        event.deltaY === 0 ||
+        Math.abs(event.deltaX) >= Math.abs(event.deltaY)
+      ) {
+        return
+      }
+      event.preventDefault()
+      bar.scrollLeft += event.deltaY
+    }
+
+    bar.addEventListener('wheel', onWheel, { passive: false })
+    return () => bar.removeEventListener('wheel', onWheel)
+  }, [])
+
   const openContextMenu = (event: React.MouseEvent, tabId: string): void => {
     event.preventDefault()
     const index = tabs.findIndex((t) => t.id === tabId)
@@ -96,7 +119,7 @@ export function QueryTabsBar({
       ))}
       <div
         className="query-tab"
-        style={{ padding: '0 10px', color: 'var(--text-dim)' }}
+        style={{ padding: '3px 10px', color: 'var(--text-dim)' }}
         title="New query tab (Ctrl+T)"
         onClick={onNewTab}
       >

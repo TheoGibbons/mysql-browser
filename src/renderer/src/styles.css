@@ -419,20 +419,27 @@ textarea {
 .query-tabbar {
   display: flex;
   align-items: stretch;
-  height: var(--tab-h);
+  min-height: var(--tab-h);
   background: var(--bg-header);
   border-bottom: 1px solid var(--border);
   flex: none;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+}
+
+.query-tabbar::-webkit-scrollbar {
+  height: 6px;
+}
+
+.query-tabbar::-webkit-scrollbar-thumb {
+  border-width: 1px;
 }
 
 .query-tab {
   display: flex;
   align-items: center;
   gap: 5px;
-  padding: 0 6px 0 9px;
+  padding: 3px 6px 3px 9px;
   border-right: 1px solid var(--border);
   font-size: var(--fs-sm);
   white-space: nowrap;
@@ -477,6 +484,10 @@ textarea {
   flex-direction: column;
   background: var(--bg-panel);
   min-height: 0;
+}
+
+.query-editor-pane {
+  min-height: 100px;
 }
 
 .pane-head {
