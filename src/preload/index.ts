@@ -26,10 +26,15 @@ async function call<T>(channel: string, ...args: unknown[]): Promise<T> {
     code?: string
     errno?: number
     sqlState?: string
+    statement?: string
+    position?: number
   }
   error.code = result.error.code
   error.errno = result.error.errno
   error.sqlState = result.error.sqlState
+  // Where the server said the problem is, so the editor can point at it.
+  error.statement = result.error.statement
+  error.position = result.error.position
   throw error
 }
 

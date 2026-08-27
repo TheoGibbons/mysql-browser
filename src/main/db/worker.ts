@@ -358,6 +358,21 @@ async function cancelTab(tabId: string): Promise<{ killed: boolean }> {
   }
 }
 
+/**
+ * Records which statement failed, and where in it the server pointed, on the
+ * error itself — the only channel that survives back to the top-level handler.
+ */
+function describeFailure(err: unknown, statement: string): unknown {
+  if (err === null || typeof err !== 'object') return err
+  const tagged = err as { failedStatement?: string; failedPosition?: number }
+  if (tagged.failedStatement === undefined) {
+    tagged.failedStatement = statement
+    const position = driver.errorPosition(err, statement)
+    if (position !== null) tagged.failedPosition = position
+  }
+  return err
+}
+
 async function runQuery(tabId: string, sql: string, limitRows?: number): Promise<QueryOutcome> {
   const statements = splitStatements(sql, engine)
   if (statements.length === 0) throw new Error('Nothing to execute')
@@ -389,9 +404,17 @@ async function runQuery(tabId: string, sql: string, limitRows?: number): Promise
       } catch (err) {
         // An idle socket dropped by RDS/a NAT gateway looks exactly like this,
         // and the user should never have to press Reconnect for it.
-        if (timedOut || closed || !canRetryStatement(err, statement.text)) throw err
+        if (timedOut || closed || !canRetryStatement(err, statement.text)) {
+          // Tag the failure with the statement it came from, so the editor can
+          // find that text in the tab and mark the spot the server named.
+          throw describeFailure(err, statement.text)
+        }
         entry = await replaceTabConnection(tabId, entry)
-        result = await runStatement(entry, statement.text, limitRows ?? MAX_ROWS)
+        try {
+          result = await runStatement(entry, statement.text, limitRows ?? MAX_ROWS)
+        } catch (retryErr) {
+          throw describeFailure(retryErr, statement.text)
+        }
       }
       results.push(result)
       executed.push(statement.text)
@@ -516,7 +539,9 @@ port.on('message', (req: WorkerRequest) => {
           message: err?.sqlMessage || err?.message || String(err),
           code: err?.code,
           errno: err?.errno,
-          sqlState: err?.sqlState
+          sqlState: err?.sqlState,
+          statement: err?.failedStatement,
+          position: err?.failedPosition
         }
       }
       port.postMessage(response)

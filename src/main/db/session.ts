@@ -24,7 +24,10 @@ export class SessionError extends Error {
     message: string,
     readonly code?: string,
     readonly errno?: number,
-    readonly sqlState?: string
+    readonly sqlState?: string,
+    /** The statement that failed, and the 1-based offset the server named. */
+    readonly statement?: string,
+    readonly position?: number
   ) {
     super(message)
     this.name = 'SessionError'
@@ -85,7 +88,16 @@ export class Session {
     if (msg.ok) {
       entry.resolve(msg.result)
     } else {
-      entry.reject(new SessionError(msg.error.message, msg.error.code, msg.error.errno, msg.error.sqlState))
+      entry.reject(
+        new SessionError(
+          msg.error.message,
+          msg.error.code,
+          msg.error.errno,
+          msg.error.sqlState,
+          msg.error.statement,
+          msg.error.position
+        )
+      )
     }
   }
 

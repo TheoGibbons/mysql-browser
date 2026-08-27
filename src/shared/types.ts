@@ -480,6 +480,15 @@ export interface TransferState {
   command: string
 }
 
+/** What the server said about the statement that failed, for the editor to mark. */
+export interface QueryFailure {
+  /** The statement as sent, so the editor can locate it in the tab's text. */
+  statement: string
+  /** 1-based offset into `statement` the server pointed at, when it gave one. */
+  position: number | null
+  message: string
+}
+
 export interface QueryTabState {
   id: string
   kind: TabKind
@@ -491,6 +500,8 @@ export interface QueryTabState {
   result: ResultSet | null
   /** Statement whose result is displayed. */
   resultStatement: string
+  /** Set when the last run failed; cleared by the next run or the next edit. */
+  failure?: QueryFailure | null
   designer: DesignerState | null
   /** Only set on `export`/`import` tabs. */
   transfer?: TransferState | null
@@ -610,6 +621,13 @@ export interface IpcError {
   sqlState?: string
   /** MySQL error number, when the failure came from a MySQL server. */
   errno?: number
+  /**
+   * The statement that failed, verbatim as it was sent. The editor locates
+   * this text in the tab to work out where to draw the marker.
+   */
+  statement?: string
+  /** 1-based character offset into `statement` that the server objected to. */
+  position?: number
 }
 
 /**

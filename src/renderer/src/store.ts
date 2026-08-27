@@ -138,6 +138,7 @@ function makeTab(options: NewTabOptions, index: number): QueryTabState {
     sql,
     result: null,
     resultStatement: '',
+    failure: null,
     designer: options.designer ?? null,
     cursorLine: 1,
     updatedAt: Date.now()
@@ -626,6 +627,7 @@ export const useAppStore = create<AppState>((set, get) => {
         get().updateTab(sessionId, tabId, {
           result: chosen ?? null,
           resultStatement: outcome.statements[chosenIndex] ?? trimmed,
+          failure: null,
           title: nextTitle
         })
       } catch (err) {
@@ -635,9 +637,19 @@ export const useAppStore = create<AppState>((set, get) => {
           durationMs: Date.now() - started,
           fetchMs: 0
         })
+        // The server usually names the statement and the character it objected
+        // to; keep both so the editor can mark the spot rather than guess at it.
+        const failed = err as Error & { statement?: string; position?: number }
         get().updateTab(sessionId, tabId, {
           result: null,
-          resultStatement: (err as Error).message
+          resultStatement: failed.message,
+          failure: failed.statement
+            ? {
+                statement: failed.statement,
+                position: failed.position ?? null,
+                message: failed.message
+              }
+            : null
         })
       } finally {
         patchConn(sessionId, (t) => {

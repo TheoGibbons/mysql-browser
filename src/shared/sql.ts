@@ -22,6 +22,22 @@ export interface Statement {
 /** Matches the opening of a Postgres dollar-quoted body: `$$` or `$tag$`. */
 const DOLLAR_QUOTE = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/
 
+const IDENT_CHAR = /[A-Za-z0-9_$]/
+
+/**
+ * True when the `'` at `at` opens a Postgres `E'…'` string — the one form in
+ * that dialect where a backslash escapes the character after it.
+ *
+ * Exported so the editor's linter applies exactly the same rule; the two have
+ * to agree on where a literal ends or they disagree about where statements do.
+ */
+export function opensEscapeString(sql: string, at: number): boolean {
+  const prev = sql[at - 1]
+  if (prev !== 'E' && prev !== 'e') return false
+  const before = sql[at - 2]
+  return before === undefined || !IDENT_CHAR.test(before)
+}
+
 /**
  * Splits a script into statements on `;`, ignoring delimiters that appear
  * inside string literals, quoted identifiers or comments.
@@ -63,10 +79,11 @@ export function splitStatements(sql: string, engine: DbEngine = 'mysql'): Statem
 
     if (ch === "'" || ch === '"' || (!isPg && ch === '`')) {
       const quote = ch
-      // Backslash is only an escape inside a MySQL literal; Postgres reserves
-      // that for the E'' form, which this treats as a plain literal — the
-      // doubled-quote rule below still terminates it correctly.
-      const backslashEscapes = !isPg && quote !== '`'
+      // Backslash escapes inside any MySQL literal, but in Postgres only
+      // inside `E'…'`. Reading a plain Postgres literal as escaped (or an
+      // E-string as plain) misplaces the closing quote, which then swallows
+      // the `;` after it and merges two statements into one.
+      const backslashEscapes = isPg ? quote === "'" && opensEscapeString(sql, i) : quote !== '`'
       i++
       while (i < sql.length) {
         if (sql[i] === '\\' && backslashEscapes) {
@@ -87,7 +104,8 @@ export function splitStatements(sql: string, engine: DbEngine = 'mysql'): Statem
       continue
     }
 
-    if (ch === '-' && next === '-' && (sql[i + 2] === undefined || /\s/.test(sql[i + 2]))) {
+    // Postgres ends the line on any `--`; MySQL only when whitespace follows.
+    if (ch === '-' && next === '-' && (isPg || sql[i + 2] === undefined || /\s/.test(sql[i + 2]))) {
       while (i < sql.length && sql[i] !== '\n') i++
       continue
     }

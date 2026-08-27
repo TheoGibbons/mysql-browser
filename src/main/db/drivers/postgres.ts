@@ -305,6 +305,17 @@ export class PostgresDriver implements Driver {
     )
   }
 
+  /**
+   * Postgres hands back an exact 1-based offset on `err.position` for syntax
+   * errors and many semantic ones — no guessing needed. `pg` delivers it as a
+   * string.
+   */
+  errorPosition(err: any, sql: string): number | null {
+    const position = Number(err?.position)
+    if (!Number.isInteger(position) || position < 1) return null
+    return position <= sql.length + 1 ? position : null
+  }
+
   schemaFromStatement(sql: string): string | null {
     // `SET search_path TO a, b` — the first entry is the one new objects and
     // unqualified lookups land in, so that is what the tree should follow.

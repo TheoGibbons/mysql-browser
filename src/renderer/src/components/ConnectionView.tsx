@@ -613,6 +613,7 @@ function TabContent({
           }
           background={isValidHex(conn.config.color) ? tint(conn.config.color!, 0.14) : undefined}
           engine={engine}
+          failure={tab.failure ?? null}
         />
       </div>
 

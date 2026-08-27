@@ -280,6 +280,40 @@ export class MysqlDriver implements Driver {
     return m ? m[1] : null
   }
 
+  /**
+   * MySQL reports no offset, but a syntax error quotes the text it choked on:
+   * `… right syntax to use near 'ORDER BY x' at line 2`. That snippet is the
+   * remaining input from the error onwards, so finding it in the statement
+   * recovers the position.
+   */
+  errorPosition(err: any, sql: string): number | null {
+    const message = String(err?.sqlMessage || err?.message || '')
+    const near = /near '([\s\S]*?)' at line (\d+)/.exec(message)
+    if (!near) return null
+
+    // The snippet is truncated at 80 chars and has its newlines preserved, so
+    // match on its first line only.
+    const needle = near[1].split('\n')[0]
+    if (!needle) return null
+
+    // Search from the reported line, since a short snippet ("FROM") may well
+    // occur earlier in the statement too.
+    const line = Number(near[2])
+    let from = 0
+    for (let n = 1; n < line; n++) {
+      const nextLine = sql.indexOf('\n', from)
+      if (nextLine < 0) break
+      from = nextLine + 1
+    }
+
+    const at = sql.indexOf(needle, from)
+    if (at >= 0) return at + 1
+    // The line number is the server's view of a statement we may have trimmed;
+    // fall back to the whole statement before giving up.
+    const anywhere = sql.indexOf(needle)
+    return anywhere >= 0 ? anywhere + 1 : null
+  }
+
   // --- catalogue ---------------------------------------------------------
 
   async listSchemas(conn: DriverConnection): Promise<SchemaInfo[]> {

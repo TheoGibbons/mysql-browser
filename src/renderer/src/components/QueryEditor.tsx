@@ -1,10 +1,21 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { Compartment, EditorState, Facet, RangeSetBuilder } from '@codemirror/state'
+import {
+  Compartment,
+  EditorState,
+  Facet,
+  RangeSet,
+  RangeSetBuilder,
+  StateField
+} from '@codemirror/state'
+import { StateEffect } from '@codemirror/state'
+import type { Range } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
+  GutterMarker,
   ViewPlugin,
   drawSelection,
+  gutter,
   highlightActiveLine,
   highlightActiveLineGutter,
   keymap,
@@ -38,7 +49,11 @@ import {
 } from '@codemirror/language'
 import { tags } from '@lezer/highlight'
 import { referencedTables, statementAt } from '@shared/sql'
-import type { DbEngine } from '@shared/types'
+import type { Statement } from '@shared/sql'
+import type { DbEngine, QueryFailure } from '@shared/types'
+import { forEachDiagnostic, linter, lintKeymap } from '@codemirror/lint'
+import type { Diagnostic } from '@codemirror/lint'
+import { lintSql, type SqlDiagnostic } from '../lib/sqlLint'
 
 /**
  * The connection's engine, carried in editor state so the statement-splitting
@@ -77,6 +92,8 @@ interface Props {
   background?: string
   /** Picks the grammar, the keyword set and the statement splitter. */
   engine: DbEngine
+  /** The last failed run, marked in the editor with the server's own message. */
+  failure?: QueryFailure | null
 }
 
 interface CompletionContextData {
@@ -180,6 +197,157 @@ const highlightStyle = HighlightStyle.define([
   { tag: tags.quote, color: '#008a55' }
 ])
 
+/**
+ * Runs `compute`, or gives up quietly.
+ *
+ * Unlike a `ViewPlugin`, which CodeMirror wraps in its own try/catch, an
+ * exception thrown out of a `StateField` update escapes `state.update()` and
+ * takes the editor with it — the user stops being able to type. A bug in the
+ * statement splitter must cost the markers, never the editing.
+ */
+function attempt<T>(compute: () => T, fallback: T): T {
+  try {
+    return compute()
+  } catch (error) {
+    console.error('SQL analysis failed', error)
+    return fallback
+  }
+}
+
+function findCaretStatement(state: EditorState): Statement | null {
+  return attempt(
+    () => statementAt(state.doc.toString(), state.selection.main.head, state.facet(sqlEngine)),
+    null
+  )
+}
+
+/**
+ * The statement the caret sits in — the one Ctrl+Enter runs. Kept in state so
+ * the shading, the gutter dot and the editor API all name the same statement
+ * from one document scan.
+ *
+ * Only recomputed when the caret actually leaves the statement, so arrowing
+ * around inside one costs nothing.
+ */
+const caretStatement = StateField.define<Statement | null>({
+  create: (state) => findCaretStatement(state),
+  update: (value, tr) => {
+    if (tr.docChanged) return findCaretStatement(tr.state)
+
+    const caret = tr.state.selection.main.head
+    if (caret === tr.startState.selection.main.head) return value
+    if (value && caret >= value.start && caret <= value.end + 1) return value
+    return findCaretStatement(tr.state)
+  }
+})
+
+/**
+ * The last failed run, held in editor state so it can be marked alongside the
+ * local rules. Set from outside via `setQueryFailure`; the next edit clears it,
+ * since the text the server complained about no longer exists.
+ */
+const setQueryFailure = StateEffect.define<QueryFailure | null>()
+
+const queryFailure = StateField.define<QueryFailure | null>({
+  create: () => null,
+  update: (value, tr) => {
+    for (const effect of tr.effects) {
+      if (effect.is(setQueryFailure)) return effect.value
+    }
+    return tr.docChanged ? null : value
+  }
+})
+
+/**
+ * Turns the server's verdict into a diagnostic.
+ *
+ * The statement is located by its text rather than by a stored offset, which
+ * keeps this honest across every way a query can be launched — whole buffer,
+ * selection, or the statement at the caret. If the text isn't there any more,
+ * nothing is marked.
+ */
+function serverDiagnostic(state: EditorState): Diagnostic | null {
+  const failure = state.field(queryFailure)
+  if (!failure) return null
+
+  const doc = state.doc.toString()
+  const at = doc.indexOf(failure.statement.trim())
+  if (at < 0) return null
+
+  const statementEnd = at + failure.statement.trim().length
+  // Without an offset the server still told us *which* statement broke, so
+  // mark the whole thing rather than nothing.
+  if (failure.position === null) {
+    return {
+      from: at,
+      to: statementEnd,
+      severity: 'error',
+      source: 'server',
+      message: failure.message,
+      markClass: 'cm-sql-error'
+    }
+  }
+
+  const from = Math.min(at + failure.position - 1, statementEnd - 1)
+  // Underline to the end of the word the server pointed at, so there's
+  // something to see and to hover.
+  const word = /^[\w$`'".]+/.exec(doc.slice(from, statementEnd))
+  return {
+    from,
+    to: Math.min(from + (word ? word[0].length : 1), statementEnd),
+    severity: 'error',
+    source: 'server',
+    message: failure.message,
+    markClass: 'cm-sql-error'
+  }
+}
+
+/**
+ * The syntax check, run through `@codemirror/lint` so the diagnostics come
+ * with hover tooltips, a problems panel and F8 navigation, and so they're
+ * computed off the transaction path — a linter crash can't wedge the editor.
+ *
+ * The server's own error is folded in here rather than drawn separately, so
+ * both kinds of problem share one gutter, one tooltip and one panel.
+ */
+const sqlLinter = linter(
+  (view) => {
+    const { state } = view
+    const found = attempt(
+      () => lintSql(state.doc.toString(), state.facet(sqlEngine), state.selection.main.head),
+      [] as readonly SqlDiagnostic[]
+    )
+    const limit = state.doc.length
+    const diagnostics: Diagnostic[] = found.map((d) => ({
+      from: Math.min(d.from, limit),
+      to: Math.min(d.to, limit),
+      severity: 'error' as const,
+      source: 'sql',
+      message: d.message,
+      // Our own squiggle, drawn with `text-decoration` rather than lint's
+      // background image so it survives line wrapping.
+      markClass: 'cm-sql-error'
+    }))
+
+    const fromServer = attempt(() => serverDiagnostic(state), null)
+    if (fromServer) diagnostics.push(fromServer)
+
+    return diagnostics.sort((a, b) => a.from - b.from || a.to - b.to)
+  },
+  {
+    delay: 300,
+    // Which "unfinished" complaints are hushed depends on the statement the
+    // caret is in, so a move between statements needs a fresh pass — a move
+    // within one does not. A new server verdict always needs one.
+    needsRefresh: (update) => {
+      if (update.startState.field(queryFailure) !== update.state.field(queryFailure)) return true
+      const before = update.startState.field(caretStatement)
+      const after = update.state.field(caretStatement)
+      return before?.start !== after?.start || before?.end !== after?.end
+    }
+  }
+)
+
 /** Shades the statement the caret is inside, like Workbench's current-statement marker. */
 const currentStatementHighlight = ViewPlugin.fromClass(
   class {
@@ -198,11 +366,7 @@ const currentStatementHighlight = ViewPlugin.fromClass(
     build(view: EditorView): DecorationSet {
       const builder = new RangeSetBuilder<Decoration>()
       const doc = view.state.doc
-      const statement = statementAt(
-        doc.toString(),
-        view.state.selection.main.head,
-        view.state.facet(sqlEngine)
-      )
+      const statement = view.state.field(caretStatement)
       if (!statement) return builder.finish()
 
       const fromLine = doc.lineAt(Math.min(statement.start, doc.length)).number
@@ -218,6 +382,75 @@ const currentStatementHighlight = ViewPlugin.fromClass(
   { decorations: (plugin) => plugin.decorations }
 )
 
+class ErrorMarker extends GutterMarker {
+  constructor(readonly message: string) {
+    super()
+  }
+
+  eq(other: GutterMarker): boolean {
+    return other instanceof ErrorMarker && other.message === this.message
+  }
+
+  toDOM(): Node {
+    const box = document.createElement('span')
+    box.className = 'cm-lint-error'
+    box.textContent = '×'
+    box.title = this.message
+    return box
+  }
+}
+
+/** Workbench's blue dot: the statement Ctrl+Enter would run. */
+class CaretStatementMarker extends GutterMarker {
+  eq(other: GutterMarker): boolean {
+    return other instanceof CaretStatementMarker
+  }
+
+  toDOM(): Node {
+    const dot = document.createElement('span')
+    dot.className = 'cm-statement-marker'
+    dot.title = 'Statement at the cursor'
+    return dot
+  }
+}
+
+const caretStatementMarker = new CaretStatementMarker()
+
+/**
+ * The strip between the line numbers and the text: a red cross on any line
+ * carrying a problem, otherwise a dot beside the statement being edited. The
+ * cross wins, so a broken current statement reads as broken.
+ */
+const statusGutter = gutter({
+  class: 'cm-status-gutter',
+  markers: (view) => {
+    const { state } = view
+    const doc = state.doc
+
+    // Several problems can land on one line; the marker's tooltip lists them all.
+    const byLine = new Map<number, string[]>()
+    forEachDiagnostic(state, (diagnostic, from) => {
+      const line = doc.lineAt(Math.min(from, doc.length))
+      const messages = byLine.get(line.from)
+      if (messages) messages.push(diagnostic.message)
+      else byLine.set(line.from, [diagnostic.message])
+    })
+
+    const markers: Range<GutterMarker>[] = []
+    for (const [at, messages] of byLine) {
+      markers.push(new ErrorMarker(messages.join('\n')).range(at))
+    }
+
+    const statement = state.field(caretStatement)
+    if (statement) {
+      const at = doc.lineAt(Math.min(statement.start, doc.length)).from
+      if (!byLine.has(at)) markers.push(caretStatementMarker.range(at))
+    }
+
+    return RangeSet.of(markers, true)
+  }
+})
+
 const DEBOUNCE_MS = 300
 
 export function QueryEditor({
@@ -232,7 +465,8 @@ export function QueryEditor({
   onNeedSchemaColumns,
   readOnly = false,
   background,
-  engine
+  engine,
+  failure
 }: Props): JSX.Element {
   const sqlDialect = engine === 'postgres' ? PostgreSQL : MySQL
   const hostRef = useRef<HTMLDivElement>(null)
@@ -283,6 +517,12 @@ export function QueryEditor({
         doc: initialSql,
         extensions: [
           lineNumbers(),
+          caretStatement,
+          queryFailure,
+          sqlLinter,
+          // After `lineNumbers` so the markers sit between the numbers and the
+          // text, the way Workbench arranges them.
+          statusGutter,
           highlightActiveLineGutter(),
           highlightActiveLine(),
           history(),
@@ -322,6 +562,7 @@ export function QueryEditor({
             { key: 'Ctrl-Space', preventDefault: true, run: startCompletion },
             { key: 'Ctrl-d', preventDefault: true, run: copyLineDown },
             { key: 'Tab', run: acceptCompletion },
+            ...lintKeymap,
             ...closeBracketsKeymap,
             ...completionKeymap,
             ...searchKeymap,
@@ -357,13 +598,7 @@ export function QueryEditor({
         if (from === to) return null
         return view.state.sliceDoc(from, to)
       },
-      getStatementAtCursor: () => {
-        const text = view.state.doc.toString()
-        return (
-          statementAt(text, view.state.selection.main.head, view.state.facet(sqlEngine))?.text ??
-          null
-        )
-      },
+      getStatementAtCursor: () => view.state.field(caretStatement)?.text ?? null,
       setSql: (next: string) => {
         view.dispatch({
           changes: { from: 0, to: view.state.doc.length, insert: next }
@@ -390,6 +625,14 @@ export function QueryEditor({
     if (!view) return
     view.dispatch({ effects: langCompartment.current.reconfigure(languageExtension) })
   }, [languageExtension])
+
+  // Push the server's verdict on the last run into editor state, where the
+  // linter folds it in with the local rules.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: setQueryFailure.of(failure ?? null) })
+  }, [failure])
 
   // The CodeMirror content is transparent (see styles.css), so tinting the host
   // shows through the editor without touching syntax colours.

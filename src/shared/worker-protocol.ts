@@ -31,7 +31,19 @@ export type WorkerRequest =
 
 export type WorkerResponse =
   | { id: number; ok: true; result: unknown }
-  | { id: number; ok: false; error: { message: string; code?: string; errno?: number; sqlState?: string } }
+  | {
+      id: number
+      ok: false
+      error: {
+        message: string
+        code?: string
+        errno?: number
+        sqlState?: string
+        /** The statement that failed, and where in it the server pointed. */
+        statement?: string
+        position?: number
+      }
+    }
 
 export type WorkerEvent =
   | { event: 'status'; status: SessionStatus; message?: string; serverVersion?: string }

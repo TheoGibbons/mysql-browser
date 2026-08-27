@@ -92,6 +92,15 @@ export interface Driver {
   /** The schema a statement switched to, or null if it was not that kind of statement. */
   schemaFromStatement(sql: string): string | null
 
+  /**
+   * Where in `sql` the server says the failure is, as a 1-based character
+   * offset, or null when it didn't say.
+   *
+   * This is what lets the editor underline the exact character the server
+   * objected to, in the server's own words, instead of guessing.
+   */
+  errorPosition(err: unknown, sql: string): number | null
+
   // --- catalogue ---------------------------------------------------------
   listSchemas(conn: DriverConnection): Promise<SchemaInfo[]>
   tableColumns(conn: DriverConnection, schema: string, table: string): Promise<string[]>

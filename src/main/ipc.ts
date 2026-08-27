@@ -46,7 +46,10 @@ async function envelope<T>(fn: () => Promise<T> | T): Promise<IpcResult<T>> {
         message: err?.message ?? String(err),
         code: err?.code,
         errno: err?.errno,
-        sqlState: err?.sqlState
+        sqlState: err?.sqlState,
+        // Carried through so the editor can mark where the server objected.
+        statement: err?.statement,
+        position: err?.position
       }
     }
   }
