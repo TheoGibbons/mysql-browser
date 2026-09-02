@@ -185,6 +185,25 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
 
   const copy = (text: string): void => void window.api.clipboard.write(text)
 
+  /** One object per line keeps multi-object copies useful in editors and terminals. */
+  const copyShortNames = (selection: Node[]): void => {
+    if (selection.length === 0) return
+    copy(selection.map((item) => item.name).join('\n'))
+  }
+
+  /** SQL templates stay separate statements when several relations are selected. */
+  const copyTableTemplates = async (
+    targets: TableNode[],
+    template: (target: TableNode, columns: string[]) => string
+  ): Promise<void> => {
+    const statements = await Promise.all(
+      targets.map(async (target) =>
+        template(target, await columnsFor(target.schema, target.name))
+      )
+    )
+    copy(statements.join('\n\n'))
+  }
+
   const openAlterTable = useCallback(
     async (schema: string, table: string) => {
       if (status !== 'connected') return
@@ -244,24 +263,37 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
       },
       { separator: true },
       {
-        label: 'Copy to clipboard: name',
-        onSelect: () => copy(node.name),
-        disabled: multiple
-      },
-      {
-        label: 'Copy to clipboard: create statement',
-        onSelect: async () => {
-          if (status === 'connected') {
-            try {
-              copy(await window.api.session.createStatement(sessionId, 'schema', node.name))
-              return
-            } catch {
-              /* fall through to the template */
+        label: 'Copy to Clipboard',
+        disabled: !compatible,
+        submenu: [
+          {
+            label: 'Name (short)',
+            onSelect: () => copyShortNames(targets)
+          },
+          { separator: true },
+          {
+            label: 'Create statement',
+            onSelect: async () => {
+              const statements = await Promise.all(
+                targets.map(async (target) => {
+                  if (status === 'connected') {
+                    try {
+                      return await window.api.session.createStatement(
+                        sessionId,
+                        'schema',
+                        target.name
+                      )
+                    } catch {
+                      /* fall through to the template */
+                    }
+                  }
+                  return T.createSchema(d, target.name)
+                })
+              )
+              copy(statements.join('\n\n'))
             }
           }
-          copy(T.createSchema(d, node.name))
-        },
-        disabled: multiple
+        ]
       },
       { separator: true },
       {
@@ -293,6 +325,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
     const compatible = targets.length === selection.length
     const allTables = compatible && targets.every((item) => item.tableType === 'table')
     const allViews = compatible && targets.every((item) => item.tableType === 'view')
+    const copyCompatible = allTables || allViews
     const objectName = allTables ? 'Table' : allViews ? 'View' : 'Object'
     const dropSql = T.withForeignKeyChecks(
       d,
@@ -317,41 +350,64 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
       { separator: true },
       {
         label: 'Copy to Clipboard',
-        disabled: multiple,
+        disabled: !copyCompatible,
         submenu: [
-          { label: 'Name (short)', onSelect: () => copy(node.name) },
-          { label: 'Name (long)', onSelect: () => copy(`${node.schema}.${node.name}`) },
+          { label: 'Name (short)', onSelect: () => copyShortNames(targets) },
+          {
+            label: 'Name (long)',
+            onSelect: () =>
+              copy(targets.map((target) => `${target.schema}.${target.name}`).join('\n'))
+          },
           { separator: true },
           {
             label: 'Insert into statement',
-            onSelect: async () =>
-              copy(T.insertIntoTemplate(d, node.schema, node.name, await columnsFor(node.schema, node.name)))
+            onSelect: () =>
+              void copyTableTemplates(targets, (target, columns) =>
+                T.insertIntoTemplate(d, target.schema, target.name, columns)
+              )
           },
           {
             label: 'Insert set statement',
-            onSelect: async () =>
-              copy(T.insertSetTemplate(d, node.schema, node.name, await columnsFor(node.schema, node.name)))
+            onSelect: () =>
+              void copyTableTemplates(targets, (target, columns) =>
+                T.insertSetTemplate(d, target.schema, target.name, columns)
+              )
           },
           {
             label: 'Update statement',
-            onSelect: async () =>
-              copy(T.updateTemplate(d, node.schema, node.name, await columnsFor(node.schema, node.name)))
+            onSelect: () =>
+              void copyTableTemplates(targets, (target, columns) =>
+                T.updateTemplate(d, target.schema, target.name, columns)
+              )
           },
           {
             label: 'Delete statement',
-            onSelect: async () =>
-              copy(T.deleteTemplate(d, node.schema, node.name, await columnsFor(node.schema, node.name)))
+            onSelect: () =>
+              void copyTableTemplates(targets, (target, columns) =>
+                T.deleteTemplate(d, target.schema, target.name, columns)
+              )
           },
           { separator: true },
           {
             label: 'Create statement',
             onSelect: async () => {
               if (status !== 'connected') return
-              try {
-                copy(await window.api.session.createStatement(sessionId, 'table', node.schema, node.name))
-              } catch {
-                /* nothing to copy */
-              }
+              const statements = await Promise.all(
+                targets.map(async (target) => {
+                  try {
+                    return await window.api.session.createStatement(
+                      sessionId,
+                      'table',
+                      target.schema,
+                      target.name
+                    )
+                  } catch {
+                    return ''
+                  }
+                })
+              )
+              const available = statements.filter(Boolean)
+              if (available.length > 0) copy(available.join('\n\n'))
             },
             disabled: status !== 'connected'
           }
@@ -396,13 +452,28 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
 
   const columnMenu = (node: ColumnNode, selection: Node[]): MenuEntry[] => {
     const multiple = selection.length > 1
+    const targets = selection.filter((item): item is ColumnNode => item.kind === 'column')
+    const compatible = targets.length === selection.length
 
     return [
-      { label: 'Copy column name', onSelect: () => copy(node.name), disabled: multiple },
       {
-        label: 'Copy qualified name',
-        onSelect: () => copy(`${qualify(d, node.schema, node.table)}.${d.quoteIdent(node.name)}`),
-        disabled: multiple
+        label: 'Copy to Clipboard',
+        disabled: !compatible,
+        submenu: [
+          { label: 'Name (short)', onSelect: () => copyShortNames(targets) },
+          {
+            label: 'Name (qualified)',
+            onSelect: () =>
+              copy(
+                targets
+                  .map(
+                    (target) =>
+                      `${qualify(d, target.schema, target.table)}.${d.quoteIdent(target.name)}`
+                  )
+                  .join('\n')
+              )
+          }
+        ]
       },
       { separator: true },
       {
@@ -419,6 +490,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
   }
 
   const onNodeClick = (node: Node, event: ReactMouseEvent<HTMLDivElement>): void => {
+    scrollRef.current?.focus({ preventScroll: true })
     const additive = event.ctrlKey || event.metaKey
 
     if (event.shiftKey) {
@@ -505,8 +577,20 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
         className="tree"
         ref={scrollRef}
         role="tree"
+        tabIndex={0}
         aria-multiselectable="true"
         onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
+        onKeyDown={(e) => {
+          if (
+            (e.ctrlKey || e.metaKey) &&
+            !e.altKey &&
+            e.key.toLowerCase() === 'c' &&
+            selectedVisibleNodes.length > 0
+          ) {
+            e.preventDefault()
+            copyShortNames(selectedVisibleNodes)
+          }
+        }}
       >
         {nodes.length === 0 ? (
           <div className="tree-empty">
@@ -534,6 +618,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
                   onDoubleClick={() => onNodeDoubleClick(node)}
                   onContextMenu={(e) => {
                     e.preventDefault()
+                    scrollRef.current?.focus({ preventScroll: true })
                     const selection = selectionForContextMenu(node)
                     if (node.kind === 'schema') menu.show(e, schemaMenu(node, selection))
                     else if (node.kind === 'table') menu.show(e, tableMenu(node, selection))
