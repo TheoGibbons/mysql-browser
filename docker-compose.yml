@@ -15,9 +15,16 @@ services:
       - '80'
     # 127.0.0.1, not localhost: busybox wget tries the ::1 record first and
     # nginx listens on IPv4 only, so `localhost` is a guaranteed refusal.
+    #
+    # Traefik routes only to a healthy container, so these timings are what make
+    # a LIVE deploy seamless (scripts/deploy.sh). start_interval probes every
+    # second while booting, so a new release takes traffic as soon as it answers.
+    # The short interval and the /tmp/drain check let a deploy take the outgoing
+    # release out of rotation within 15 seconds, before it is stopped.
     healthcheck:
-      test: ['CMD', 'wget', '--spider', '-q', 'http://127.0.0.1/healthz']
-      interval: 10s
+      test: ['CMD-SHELL', 'test ! -f /tmp/drain && wget --spider -q http://127.0.0.1/healthz || exit 1']
+      interval: 5s
       timeout: 3s
-      retries: 5
-      start_period: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s

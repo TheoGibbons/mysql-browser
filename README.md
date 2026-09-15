@@ -67,6 +67,15 @@ bash scripts/deploy.sh
 No host port is published in this mode — Traefik reaches the container over the
 `traefik-public` network and owns 80 and 443 itself.
 
+Deploys on this path do not take the site down. The script starts the new release
+beside the old one with the [docker-rollout](https://github.com/wowu/docker-rollout)
+CLI plugin, waits for it to pass its health check, lets Traefik drain the old one,
+then removes it. A release that never turns healthy is discarded and the old one
+keeps serving. For the few seconds both run, a `mysql-browser-site-lb` cookie,
+holding only an identifier for the container, keeps each browser on one release.
+Deploying hobby-traefik installs the plugin; the script stops before pulling, with
+the install command, on a server that lacks it.
+
 ## Deploying Locally
 
 Needs only Docker. Nothing is published beyond loopback.
@@ -142,6 +151,10 @@ gh secret set EC2_KNOWN_HOSTS     --env production \
 
 The deploy stops rather than overwrite tracked files edited directly on the
 server. Commit through Git instead of letting the live and local copies drift.
+
+A push deploys with the `scripts/deploy.sh` already on the server, which then
+pulls. A change to the script itself therefore takes effect from the deploy after
+the one that ships it.
 
 `.github/workflows/release.yml` needs no secrets — it builds on `windows-latest`
 and publishes with the automatic `GITHUB_TOKEN`.

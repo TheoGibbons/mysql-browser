@@ -10,6 +10,12 @@ services:
       traefik.http.routers.mysql-browser-site.rule: 'Host(`${APP_HOST:?Set APP_HOST in .env}`)'
       traefik.http.routers.mysql-browser-site.entrypoints: web
       traefik.http.services.mysql-browser-site.loadbalancer.server.port: '80'
+      # A LIVE deploy runs the old and new release side by side for a few
+      # seconds. The cookie keeps a browser on one of them, so the page and the
+      # screenshots it references always come from the same release.
+      traefik.http.services.mysql-browser-site.loadbalancer.sticky.cookie.name: mysql-browser-site-lb
+      traefik.http.services.mysql-browser-site.loadbalancer.sticky.cookie.httponly: 'true'
+      traefik.http.services.mysql-browser-site.loadbalancer.sticky.cookie.samesite: lax
 
 networks:
   traefik-public:
