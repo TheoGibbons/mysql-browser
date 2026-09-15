@@ -86,6 +86,11 @@ for service in $("${compose[@]}" config --services); do
   fi
 done
 
+# Without this every build attaches a fresh provenance attestation, which gives
+# an unchanged image a new ID, and the server's Compose (2.40) recreates any
+# container whose image ID changed: services that are not rolled restarted on
+# every deploy. These images never leave the host, so nothing reads it.
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
 "${compose[@]}" build
 
 if (( ${#before_rollout[@]} )); then
