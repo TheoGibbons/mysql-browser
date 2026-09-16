@@ -1,5 +1,5 @@
-# Production-only differences: TLS on the websecure entry point. Everything
-# else is identical to the local Traefik mode.
+# Production-only differences: TLS on the websecure entry point, and the apex
+# redirect. Everything else is identical to the local Traefik mode.
 services:
   site:
     labels:
@@ -7,3 +7,28 @@ services:
       traefik.http.routers.mysql-browser-site.tls: 'true'
       traefik.http.routers.mysql-browser-site.tls.certresolver: letsencrypt
       traefik.http.services.mysql-browser-site.loadbalancer.sticky.cookie.secure: 'true'
+
+      # The apex is a second router, not a second Host() in the rule above: it
+      # has to answer on its own name to be redirected, and a rule matching both
+      # names would serve the site on both and split the site across two URLs.
+      #
+      # Its own certificate, too. A router only gets one for the hosts in its
+      # own rule, so without this the apex is served Traefik's default
+      # self-signed certificate and the browser warns before it ever redirects.
+      # Issuance is an HTTP-01 challenge on port 80, which Traefik answers ahead
+      # of the global http->https redirect, so APEX_HOST's DNS record must
+      # already point here — same rule as APP_HOST.
+      traefik.http.routers.mysql-browser-site-apex.rule: 'Host(`${APEX_HOST:?Set APEX_HOST in .env}`)'
+      traefik.http.routers.mysql-browser-site-apex.entrypoints: websecure
+      traefik.http.routers.mysql-browser-site-apex.tls: 'true'
+      traefik.http.routers.mysql-browser-site-apex.tls.certresolver: letsencrypt
+      traefik.http.routers.mysql-browser-site-apex.middlewares: mysql-browser-site-apex
+      # Never reached — the middleware redirects every request — but a router
+      # without a service is a configuration error, so name the real one.
+      traefik.http.routers.mysql-browser-site-apex.service: mysql-browser-site
+
+      # $${1} is a literal ${1} for Traefik: Compose eats a single $. It is the
+      # path, so a deep link survives the redirect instead of landing on /.
+      traefik.http.middlewares.mysql-browser-site-apex.redirectregex.regex: '^https?://[^/]+/(.*)'
+      traefik.http.middlewares.mysql-browser-site-apex.redirectregex.replacement: 'https://${APP_HOST:?Set APP_HOST in .env}/$${1}'
+      traefik.http.middlewares.mysql-browser-site-apex.redirectregex.permanent: 'true'

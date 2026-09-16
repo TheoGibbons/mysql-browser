@@ -49,8 +49,9 @@ cd ~/projects/hobby-traefik
 bash scripts/deploy.sh
 ```
 
-Point `www.mysql-browser.com` at this instance **before** deploying, or
-Let's Encrypt cannot validate it and no certificate is issued. Then:
+Point both `www.mysql-browser.com` and `mysql-browser.com` at this instance
+**before** deploying. Each gets its own certificate, so Let's Encrypt cannot
+validate a name that does not resolve here yet. Then:
 
 ```bash
 git clone https://github.com/TheoGibbons/mysql-browser.git ~/projects/mysql-browser
@@ -58,7 +59,8 @@ cd ~/projects/mysql-browser
 cp .env.production.example .env
 
 # Set before continuing:
-#   APP_HOST  public DNS name, already pointing at this instance
+#   APP_HOST   public DNS name, already pointing at this instance
+#   APEX_HOST  bare domain, permanently redirected to APP_HOST
 nano .env
 
 bash scripts/deploy.sh
@@ -66,6 +68,11 @@ bash scripts/deploy.sh
 
 No host port is published in this mode — Traefik reaches the container over the
 `traefik-public` network and owns 80 and 443 itself.
+
+The site answers on `APP_HOST` alone. `APEX_HOST` is a second router whose only
+job is a permanent redirect to it, path and all, so the site is never reachable
+at two URLs. Adding a name to DNS is not enough on its own: a host no router
+matches is a Traefik 404, not the site.
 
 Deploys on this path do not take the site down. The script starts the new release
 beside the old one with the [docker-rollout](https://github.com/wowu/docker-rollout)
