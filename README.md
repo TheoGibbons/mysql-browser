@@ -49,7 +49,7 @@ cd ~/projects/hobby-traefik
 bash scripts/deploy.sh
 ```
 
-Point `mysql-browser.sinkmailer.com` at this instance **before** deploying, or
+Point `www.mysql-browser.com` at this instance **before** deploying, or
 Let's Encrypt cannot validate it and no certificate is issued. Then:
 
 ```bash
