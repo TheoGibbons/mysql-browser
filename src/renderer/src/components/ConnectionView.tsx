@@ -313,7 +313,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
       },
       { separator: true },
       {
-        label: 'Copy all as CSV',
+        label: 'Copy to Clipboard: CSV',
         onSelect: () => void window.api.clipboard.write(toCsv(result, grid, refs))
       }
     ])
