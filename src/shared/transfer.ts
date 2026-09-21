@@ -378,7 +378,10 @@ export function buildMysqlExport(ctx: BuildContext): string {
   if (state.charset) args.push(opt('default-character-set', state.charset))
   args.push(opt('user', config.user || ''))
   args.push('--protocol=tcp')
-  if (config.useSSL) args.push('--ssl-mode=REQUIRED')
+  // Match the query connection: IAM sends the token through the cleartext
+  // authentication plugin, protected by TLS even when useSSL is unset.
+  if (config.method === 'iam') args.push('--enable-cleartext-plugin')
+  if (config.useSSL || config.method === 'iam') args.push('--ssl-mode=REQUIRED')
   if (state.skipColumnStatistics) args.push('--column-statistics=FALSE')
 
   if (state.contents === 'data-only') args.push('--no-create-info')
@@ -441,7 +444,8 @@ export function buildMysqlImport(ctx: BuildContext): string {
   if (state.charset) args.push(opt('default-character-set', state.charset))
   args.push(opt('user', config.user || ''))
   args.push('--protocol=tcp')
-  if (config.useSSL) args.push('--ssl-mode=REQUIRED')
+  if (config.method === 'iam') args.push('--enable-cleartext-plugin')
+  if (config.useSSL || config.method === 'iam') args.push('--ssl-mode=REQUIRED')
   if (state.force) args.push('--force')
   if (state.targetSchema) args.push(quoteArg(state.targetSchema))
 
