@@ -1,6 +1,6 @@
 {
   "name": "mysql-browser",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "A fast, parallel MySQL browser for Windows",
   "main": "./out/main/index.js",
   "author": "theo",
