@@ -860,8 +860,8 @@ export function ExportImportTab({ conn, tab }: Props): JSX.Element {
 
       {confirming === 'overwrite' && (
         <ConfirmModifyModal
-          title="⚠ Something is already there"
-          message="The export will replace this, and the tools give nothing back once they have started writing."
+          title="⚠ Confirm overwrite"
+          message="The export destination below already exists. Continuing will overwrite its contents. This cannot be undone."
           sql={outputPath}
           connectionName={conn.name}
           confirmLabel="Overwrite"
