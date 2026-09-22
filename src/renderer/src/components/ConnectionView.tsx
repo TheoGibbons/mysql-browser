@@ -567,7 +567,7 @@ function TabContent({
         <div className="pane-head">
           <button
             className="toolbar-btn"
-            title="Execute the selected portion of the script, or everything if nothing is selected (Ctrl+Shift+Enter)"
+            title="Execute the selected portion of the script, or everything if nothing is selected (Ctrl+Enter)"
             disabled={isRunning}
             onClick={() => onExecute('all')}
           >
@@ -575,7 +575,7 @@ function TabContent({
           </button>
           <button
             className="toolbar-btn"
-            title="Execute the statement under the keyboard cursor (Ctrl+Enter)"
+            title="Execute the statement under the keyboard cursor (Ctrl+Shift+Enter)"
             disabled={isRunning}
             onClick={() => onExecute('current')}
           >

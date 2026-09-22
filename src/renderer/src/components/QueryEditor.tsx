@@ -222,7 +222,7 @@ function findCaretStatement(state: EditorState): Statement | null {
 }
 
 /**
- * The statement the caret sits in — the one Ctrl+Enter runs. Kept in state so
+ * The statement the caret sits in. Kept in state so
  * the shading, the gutter dot and the editor API all name the same statement
  * from one document scan.
  *
@@ -400,7 +400,7 @@ class ErrorMarker extends GutterMarker {
   }
 }
 
-/** Workbench's blue dot: the statement Ctrl+Enter would run. */
+/** Workbench's blue dot: the statement at the caret. */
 class CaretStatementMarker extends GutterMarker {
   eq(other: GutterMarker): boolean {
     return other instanceof CaretStatementMarker
@@ -546,7 +546,7 @@ export function QueryEditor({
               preventDefault: true,
               run: () => {
                 flush()
-                handlers.current.onExecuteCurrent()
+                handlers.current.onExecuteAll()
                 return true
               }
             },
@@ -555,7 +555,7 @@ export function QueryEditor({
               preventDefault: true,
               run: () => {
                 flush()
-                handlers.current.onExecuteAll()
+                handlers.current.onExecuteCurrent()
                 return true
               }
             },

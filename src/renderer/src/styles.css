@@ -570,7 +570,7 @@ textarea {
   padding: 0;
 }
 
-/* Workbench's blue dot, beside the statement Ctrl+Enter would run. Drawn
+/* Workbench's blue dot, beside the statement at the caret. Drawn
    rather than typed, so its size doesn't depend on which font has the glyph. */
 .cm-statement-marker {
   display: block;
