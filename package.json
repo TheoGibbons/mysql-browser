@@ -13,7 +13,7 @@
     "icon": "electron scripts/build-icon.cjs",
     "dist": "electron-vite build && electron-builder --win --dir",
     "dist:installer": "electron-vite build && electron-builder --win",
-    "release": "electron-vite build && electron-builder --win --publish always"
+    "release": "electron-vite build && electron-builder --win --config scripts/electron-builder-release.cjs --publish always"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",

@@ -24,6 +24,10 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    environment: production
+    permissions:
+      contents: write
+      id-token: write # Azure login uses GitHub OIDC; no client secret or PFX.
     steps:
       - uses: actions/checkout@v5
 
@@ -56,21 +60,34 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # Split on the trigger, because `npm run release` passes
-      # `--publish always` — which publishes whether or not a tag exists. On a
-      # workflow_dispatch that would cut a real release named after whatever
-      # package.json currently says, from an arbitrary commit. Dispatch runs
-      # therefore build the installer without publishing, and pick it up from
-      # the workflow artifact below.
-      - name: Build and publish
+      - name: Authenticate to Azure for signing
+        uses: azure/login@v3
+        with:
+          # Public identifiers for mysql-browser-github; authentication uses OIDC.
+          client-id: a0a0a7c6-d822-454a-b06b-3364b60f9893
+          tenant-id: ed7b52d5-a4f8-4c29-bed1-b5c6cf7655dd
+          subscription-id: 99f62251-76d3-40ec-9bb3-70857da462f6
+
+      # Same module used by azure/artifact-signing-action@v2. Calling it from
+      # electron-builder's signing hook also signs the app and NSIS uninstaller
+      # before packaging, and the installer before updater hashes are generated.
+      - name: Install Azure Artifact Signing tools
+        shell: pwsh
+        run: |
+          Install-Module -Name ArtifactSigning -RequiredVersion 0.1.8 -Force -Repository PSGallery -Scope CurrentUser
+
+      # Tag refs publish, including a manual run that selects a v* tag.
+      # Manual branch runs sign and verify without publishing; download those
+      # installers from the workflow artifact below.
+      - name: Build, sign, verify, and publish
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release
 
-      - name: Build without publishing
+      - name: Build, sign, and verify without publishing
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        run: npm run dist:installer
+        run: npm run dist:installer -- --config scripts/electron-builder-release.cjs --publish never
 
       # The only way to get at a dispatch build, and a useful record of a
       # tagged one.
@@ -80,6 +97,7 @@ jobs:
           name: mysql-browser-installer
           path: |
             release/*.exe
+            release/*.exe.blockmap
             release/latest.yml
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14

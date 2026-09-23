@@ -163,8 +163,11 @@ A push deploys with the `scripts/deploy.sh` already on the server, which then
 pulls. A change to the script itself therefore takes effect from the deploy after
 the one that ships it.
 
-`.github/workflows/release.yml` needs no secrets — it builds on `windows-latest`
-and publishes with the automatic `GITHUB_TOKEN`.
+`.github/workflows/release.yml` builds on `windows-latest`, signs through Azure
+Artifact Signing using GitHub OIDC, and publishes with the automatic
+`GITHUB_TOKEN`. The Azure IDs are embedded in the workflow. Configure the Azure
+federated credential, signing role, and `production` environment rules described
+in [Windows signing setup](window-signing-doc.md).
 
 ## Releasing the app
 
@@ -172,17 +175,23 @@ Releases are driven by tags, and the tag must agree with `package.json`:
 
 ```bash
 # 1. Bump the version and commit it.
-npm version 0.2.0 -m "Release %s"
+npm version patch
 
 # 2. Push the commit and the tag it created.
 git push origin main --follow-tags
 ```
 
-The tag push runs `.github/workflows/release.yml`, which builds the NSIS
-installer on Windows and uploads it to a GitHub Release along with the
-`latest.yml` that the updater reads. The workflow refuses to build if the tag
+The tag push runs `.github/workflows/release.yml`, which signs and verifies the
+app, NSIS uninstaller, and installer on Windows. It uploads the installer to a
+GitHub Release along with the `latest.yml` that the updater reads. The workflow refuses to build if the tag
 and `package.json` disagree, because the release would then be named after one
 version while the update feed advertised another.
+
+For a signing test without publishing, run **Release Windows installer** manually
+on `main` from the Actions tab. Download `mysql-browser-installer` from the run's
+artifacts. Both manual and tagged builds require the Azure signing setup; a
+signing or verification failure stops the build. Selecting a `v*` tag manually
+still publishes that version, so use a branch for a test run.
 
 Two settings in `package.json` matter more than they look:
 
@@ -208,10 +217,12 @@ next time the user closes the app. The chip offers an explicit "Restart now" for
 people who would rather not wait. A missing or unreachable feed is logged and
 kept out of the UI, since being offline is the ordinary case.
 
-**The installer is unsigned.** Windows SmartScreen will warn on first run until
-the download builds reputation, which is the main argument for buying a code
-signing certificate later. Signing needs no change to any of the above — add the
-certificate as a secret and electron-builder picks it up.
+Release builds use the verified publisher from Azure Artifact Signing. The
+publisher name is embedded in the app so future updates are checked against that
+identity. Signing runs before electron-builder generates updater hashes and
+blockmaps. SmartScreen can still warn while a new download builds reputation.
+Local `dist` and `dist:installer` builds remain unsigned unless signing is
+explicitly configured; `npm run release` always requires signing.
 
 ## Architecture
 
