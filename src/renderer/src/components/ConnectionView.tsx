@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format as formatSql } from 'sql-formatter'
 import type { DesignerState, QueryTabState } from '@shared/types'
-import { hasModifyingStatement, statementAt } from '@shared/sql'
+import { modifyReason, statementAt, type ModifyReason } from '@shared/sql'
 import { dialectFor } from '@shared/dialect'
 import { gridKey, useAppStore, useGridStore, type ConnTab, type NewTabOptions } from '../store'
 import {
@@ -46,6 +46,24 @@ interface Props {
   conn: ConnTab
 }
 
+/**
+ * Confirmation copy for a script the gate couldn't prove read-only but that
+ * holds no known write (often just a typo), so the modal doesn't claim it
+ * will change anything. Empty for everything else, leaving the modal's defaults.
+ */
+function unverifiedCopy(
+  reason: ModifyReason | undefined,
+  connectionName: string
+): { title?: string; message?: string; confirmLabel?: string } {
+  if (reason?.kind !== 'unknown') return {}
+  const which = reason.statements > 1 ? `statement ${reason.statement} of ${reason.statements}` : 'it'
+  return {
+    title: `⚠ Possibly modifying query on ${connectionName}`,
+    message: `Couldn't confirm this is read-only: ${which} starts with “${reason.opening}”. Read it carefully before running.`,
+    confirmLabel: 'Run anyway'
+  }
+}
+
 export function ConnectionView({ conn }: Props): JSX.Element {
   const { sessionId, tabs, activeTabId, running, layout, status } = conn
 
@@ -83,6 +101,8 @@ export function ConnectionView({ conn }: Props): JSX.Element {
   const [pendingModify, setPendingModify] = useState<{
     sql: string
     source: 'query' | 'grid'
+    /** Why the gate tripped; absent for grid edits, which are always writes. */
+    reason?: ModifyReason
   } | null>(null)
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
@@ -147,9 +167,12 @@ export function ConnectionView({ conn }: Props): JSX.Element {
 
       // EXPLAIN never modifies; otherwise, gate modifying SQL behind the loud
       // confirmation when the connection opts in.
-      if (mode !== 'explain' && conn.config.confirmModifying && hasModifyingStatement(sql, engine)) {
-        setPendingModify({ sql, source: 'query' })
-        return
+      if (mode !== 'explain' && conn.config.confirmModifying) {
+        const reason = modifyReason(sql, engine)
+        if (reason) {
+          setPendingModify({ sql, source: 'query', reason })
+          return
+        }
       }
       runResolved(sql, mode === 'explain')
     },
@@ -470,6 +493,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
           sql={pendingModify.sql}
           connectionName={conn.name}
           confirmLabel={pendingModify.source === 'grid' ? 'Apply changes' : undefined}
+          {...unverifiedCopy(pendingModify.reason, conn.name)}
           onCancel={() => setPendingModify(null)}
           onConfirm={() => {
             const pending = pendingModify

@@ -182,6 +182,8 @@ export function stripLeadingComments(sql: string): string {
   }
 }
 
+// `SET` and `WITH` are read-only only in some forms, and any of these stops
+// being read-only once it selects `INTO` something; see `statementEffect`.
 const READ_ONLY_STARTERS = new Set([
   'SELECT',
   'SHOW',
@@ -189,29 +191,109 @@ const READ_ONLY_STARTERS = new Set([
   'DESC',
   'EXPLAIN',
   'USE',
-  'SET',
   'HELP',
-  'WITH',
   'ANALYZE',
   'CHECKSUM',
   'TABLE',
   'VALUES'
 ])
 
-/** True when the statement cannot modify data or schema. */
-export function isReadOnlyStatement(sql: string): boolean {
-  const kw = firstKeyword(sql)
-  if (!READ_ONLY_STARTERS.has(kw)) return false
-  if (kw === 'WITH') {
-    // A CTE can still wrap an INSERT/UPDATE/DELETE.
-    return !/\b(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(stripComments(sql))
-  }
-  return true
+/**
+ * Leading keywords of statements known to change data, schema or server state.
+ * This only picks the confirmation's wording: a statement that is neither here
+ * nor provably read-only is still gated, as "couldn't confirm" instead.
+ */
+const WRITE_STARTERS = new Set([
+  'INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'MERGE', 'TRUNCATE', 'LOAD', 'IMPORT',
+  'CREATE', 'ALTER', 'DROP', 'RENAME', 'COMMENT', 'REFRESH',
+  'GRANT', 'REVOKE', 'KILL', 'FLUSH', 'PURGE', 'INSTALL', 'UNINSTALL'
+])
+
+/**
+ * String literals, quoted identifiers and comments, in whichever order they
+ * open, so a keyword inside one isn't read as SQL. Same rules as
+ * `splitStatements`: backslash escapes in every MySQL literal but only in
+ * Postgres `E'…'`, `#` comments and backticks only in MySQL, `$$` bodies only
+ * in Postgres. Getting these wrong misplaces a closing quote and hides the SQL
+ * after it.
+ */
+const LITERALS_AND_COMMENTS: Record<DbEngine, RegExp> = {
+  mysql:
+    /'(?:[^'\\]|\\[\s\S]|'')*'|"(?:[^"\\]|\\[\s\S]|"")*"|`(?:[^`]|``)*`|\/\*[\s\S]*?\*\/|--(?=\s|$)[^\n]*|#[^\n]*/g,
+  postgres:
+    /\b[Ee]'(?:[^'\\]|\\[\s\S]|'')*'|'(?:[^']|'')*'|"(?:[^"]|"")*"|\$([A-Za-z_]\w*)?\$[\s\S]*?\$\1\$|\/\*[\s\S]*?\*\/|--[^\n]*/g
 }
 
-/** True when any statement in the script would modify data or schema. */
-export function hasModifyingStatement(sql: string, engine: DbEngine = 'mysql'): boolean {
-  return splitStatements(sql, engine).some((s) => !isReadOnlyStatement(s.text))
+/**
+ * Whether a `SET` reaches past the current session: server-wide or persisted
+ * variables, account passwords, default roles, resource groups. Everything else
+ * it can touch — user and session variables, `NAMES`, the next transaction's
+ * characteristics, the active role — is gone when the connection closes.
+ * Takes the statement with literals and comments masked out.
+ */
+function setOutlivesSession(text: string): boolean {
+  const target = /^\s*SET\s+(\w+)/i.exec(text)?.[1].toUpperCase()
+  if (target === 'PASSWORD' || target === 'DEFAULT' || target === 'RESOURCE') return true
+  // One SET can mix scopes (`SET @a = 1, GLOBAL b = 2`), so check every
+  // assignment. `\b` also matches the `@@global.b` spelling.
+  return /\b(GLOBAL|PERSIST|PERSIST_ONLY)\b/i.test(text)
+}
+
+export type StatementEffect = 'read' | 'write' | 'unknown'
+
+/**
+ * What running a statement can do. `read` is an allowlist of statements proven
+ * harmless, so anything unfamiliar — a typo, `CALL`, `BEGIN` — is `unknown`
+ * and still treated as possibly modifying.
+ */
+export function statementEffect(sql: string, engine: DbEngine = 'mysql'): StatementEffect {
+  const kw = firstKeyword(sql)
+  const text = sql.replace(LITERALS_AND_COMMENTS[engine], ' ')
+  if (kw === 'SET') return setOutlivesSession(text) ? 'write' : 'read'
+  if (kw === 'WITH') {
+    // A CTE can still wrap an INSERT/UPDATE/DELETE.
+    if (/\b(INSERT|UPDATE|DELETE|REPLACE)\b/i.test(text)) return 'write'
+  } else if (!READ_ONLY_STARTERS.has(kw)) {
+    return WRITE_STARTERS.has(kw) ? 'write' : 'unknown'
+  }
+  // `INTO` anything but user variables writes: `INTO OUTFILE`/`DUMPFILE` put a
+  // file on the MySQL server, and a Postgres `SELECT … INTO t` creates a table.
+  // Checked for every read starter: Postgres `EXPLAIN ANALYZE SELECT … INTO t`
+  // really does create t.
+  return /\bINTO\b(?!\s*@)/i.test(text) ? 'write' : 'read'
+}
+
+/** True when the statement cannot modify data, schema or server state. */
+export function isReadOnlyStatement(sql: string, engine: DbEngine = 'mysql'): boolean {
+  return statementEffect(sql, engine) === 'read'
+}
+
+/**
+ * Why a script needs the modify confirmation. `unknown` names the first
+ * statement that couldn't be proven read-only (1-based) and its opening word.
+ */
+export type ModifyReason =
+  | { kind: 'write' }
+  | { kind: 'unknown'; statement: number; statements: number; opening: string }
+
+/**
+ * Why a script would need the modify confirmation, or `null` when every
+ * statement is read-only. A known write outranks an unfamiliar statement:
+ * it's the stronger warning, and it's certainly true.
+ */
+export function modifyReason(sql: string, engine: DbEngine = 'mysql'): ModifyReason | null {
+  const statements = splitStatements(sql, engine)
+  const effects = statements.map((s) => statementEffect(s.text, engine))
+  if (effects.includes('write')) return { kind: 'write' }
+  const index = effects.indexOf('unknown')
+  if (index < 0) return null
+  const opening = /^\S+/.exec(stripLeadingComments(statements[index].text))?.[0] ?? ''
+  return {
+    kind: 'unknown',
+    statement: index + 1,
+    statements: statements.length,
+    opening: opening.slice(0, 40)
+  }
 }
 
 export function stripComments(sql: string): string {

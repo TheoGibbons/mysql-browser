@@ -56,7 +56,7 @@ export function ConfirmModifyModal({
         <div className="modal-body">
           <p style={{ margin: '0 0 8px', fontWeight: 600, color: '#8c1010' }}>
             {message ??
-              'This will change data or schema on this connection. Read it carefully before running.'}
+              'This will change data, schema or server state on this connection. Read it carefully before running.'}
           </p>
           <div className="sql-preview danger-preview">{sql}</div>
         </div>

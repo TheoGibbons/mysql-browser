@@ -59,7 +59,8 @@ export interface ConnectionConfig {
   color?: string
 
   /**
-   * When true, a modifying statement (INSERT/UPDATE/DELETE/DDL) executed from
+   * When true, a modifying statement (INSERT/UPDATE/DELETE/DDL, server-wide
+   * SET) — or any statement that can't be proven read-only — executed from
    * the editor triggers a loud extra confirmation before it runs. Intended for
    * production databases.
    */

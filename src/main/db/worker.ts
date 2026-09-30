@@ -290,7 +290,7 @@ async function replaceTabConnection(tabId: string, previous: TabConnection): Pro
  */
 function canRetryStatement(err: unknown, sql: string): boolean {
   if (!driver.isConnectionLost(err)) return false
-  return driver.isEnqueueRefusal(err) || isReadOnlyStatement(sql)
+  return driver.isEnqueueRefusal(err) || isReadOnlyStatement(sql, engine)
 }
 
 // ---------------------------------------------------------------------------
