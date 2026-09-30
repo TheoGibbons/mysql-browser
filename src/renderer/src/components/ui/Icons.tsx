@@ -123,15 +123,11 @@ export const NewGroupIcon = ({ size = 14, color = '#3a3a3a' }: IconProps): JSX.E
 export const SettingsIcon = ({ size = 12, color = '#5a5a5a' }: IconProps): JSX.Element =>
   svg(
     size,
-    <>
-      <circle cx="8" cy="8" r="2.2" fill="none" stroke={color} strokeWidth="1.3" />
-      <path
-        d="M8 1.6v1.8M8 12.6v1.8M14.4 8h-1.8M3.4 8H1.6M12.5 3.5l-1.3 1.3M4.8 11.2l-1.3 1.3M12.5 12.5l-1.3-1.3M4.8 4.8 3.5 3.5"
-        stroke={color}
-        strokeWidth="1.3"
-        strokeLinecap="round"
-      />
-    </>
+    <path
+      d="M6.7 2.8 6.8 0.9 9.2 0.9 9.3 2.8 10.8 3.4 12.2 2.1 13.9 3.8 12.6 5.2 13.2 6.7 15.1 6.8 15.1 9.2 13.2 9.3 12.6 10.8 13.9 12.2 12.2 13.9 10.8 12.6 9.3 13.2 9.2 15.1 6.8 15.1 6.7 13.2 5.2 12.6 3.8 13.9 2.1 12.2 3.4 10.8 2.8 9.3 0.9 9.2 0.9 6.8 2.8 6.7 3.4 5.2 2.1 3.8 3.8 2.1 5.2 3.4ZM10.3 8a2.3 2.3 0 1 0-4.6 0 2.3 2.3 0 1 0 4.6 0Z"
+      fill={color}
+      fillRule="evenodd"
+    />
   )
 
 /** Execute the whole script. */
@@ -206,12 +202,16 @@ export const PlugIcon = ({ size = 13, color = '#3a3a3a' }: IconProps): JSX.Eleme
     </>
   )
 
-export const QueryIcon = ({ size = 12, color = '#4a7ab5' }: IconProps): JSX.Element =>
+/** Select a table's rows - a grid with the editor's execute bolt, as in Workbench. */
+export const SelectRowsIcon = ({ size = 12, color = '#4a7ab5' }: IconProps): JSX.Element =>
   svg(
     size,
     <>
-      <circle cx="7" cy="7" r="4.4" fill="none" stroke={color} strokeWidth="1.4" />
-      <path d="m10.4 10.4 3.2 3.2" stroke={color} strokeWidth="1.6" strokeLinecap="round" />
-      <path d="M5.2 7h3.6" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+      <rect x="1" y="1.6" width="10.6" height="9.8" rx="1" fill="#fff" stroke={color} strokeWidth="1" />
+      <rect x="1" y="1.6" width="10.6" height="2.8" fill={color} opacity=".55" />
+      <path d="M1 7.8h10.6M4.6 4.4v7M8.1 4.4v7" stroke={color} strokeWidth=".8" />
+      {/* The white halo keeps the bolt legible where it crosses the grid. */}
+      <path d="M12.6 5.8 8.2 11.6h2.6l-1 4 4.6-6h-2.7l.9-3.8Z" fill="#d99a1e" stroke="#fff" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M12.6 5.8 8.2 11.6h2.6l-1 4 4.6-6h-2.7l.9-3.8Z" fill="#d99a1e" stroke="#a8740f" strokeWidth=".7" strokeLinejoin="round" />
     </>
   )

@@ -5,10 +5,10 @@ import { useAppStore } from '../store'
 import { useContextMenu, type MenuEntry } from './ui/ContextMenu'
 import {
   ColumnIcon,
-  QueryIcon,
   RefreshIcon,
   SchemaIcon,
   SearchIcon,
+  SelectRowsIcon,
   SettingsIcon,
   TableIcon,
   ViewIcon
@@ -671,7 +671,7 @@ export function SchemaTree({ conn, openTab }: Props): JSX.Element {
                         disabled={selectedNodes.length > 1}
                         onClick={() => selectRows(node.schema, node.name)}
                       >
-                        <QueryIcon />
+                        <SelectRowsIcon />
                       </button>
                     </span>
                   )}

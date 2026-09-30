@@ -203,7 +203,7 @@ function ConnectionCard({
       }
     >
       <h3 style={colored ? { color: readableTextColor(config.color!) } : undefined}>
-        {config.name}
+        <Marquee>{config.name}</Marquee>
       </h3>
       <div className="meta" style={metaStyle}>
         👤 <Marquee>{config.user || '—'}</Marquee>

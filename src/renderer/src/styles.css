@@ -1574,9 +1574,6 @@ textarea.field {
   margin: 0 0 4px;
   font-size: 15px;
   font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .conn-card .meta {
@@ -1595,8 +1592,10 @@ textarea.field {
   padding-right: 62px;
 }
 
-/* Overflowing text slides its tail into view while the card is hovered. */
+/* Overflowing text slides its tail into view while the card is hovered.
+   Block so it clips inside a plain heading as well as a flex row. */
 .marquee {
+  display: block;
   flex: 1;
   min-width: 0;
   overflow: hidden;
