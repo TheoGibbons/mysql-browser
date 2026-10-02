@@ -331,7 +331,8 @@ export function ExportImportTab({ conn, tab }: Props): JSX.Element {
         signal: null,
         cancelled: false,
         bytes: 0,
-        durationMs: Date.now() - startedAt
+        durationMs: Date.now() - startedAt,
+        error: (err as Error).message
       })
     }
   }

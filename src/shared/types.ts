@@ -201,6 +201,8 @@ export type ToolRunEvent =
       /** Bytes written to the output file, when there was one. */
       bytes: number
       durationMs: number
+      /** The line saying why a failed run failed, when one could be picked out. */
+      error: string | null
     }
 
 // ---------------------------------------------------------------------------

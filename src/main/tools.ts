@@ -192,6 +192,77 @@ function pgpassFile(password: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Reading a failure
+// ---------------------------------------------------------------------------
+
+/** Lines that report an error, from mysql, mysqldump, psql, pg_dump and pg_restore. */
+const ERROR_LINES = [
+  // ERROR 1205 (HY000) at line 12: Lock wait timeout exceeded; …
+  /^ERROR \d+/,
+  // mysqldump: Couldn't execute '…': … (1227) — and Error 2013:, Got errno 28 on write
+  /^(?:.*[\\/])?mysql\w*(?:\.exe)?: (?:Couldn't|Can't|Error|Got errno|unknown (?:option|variable))/i,
+  // psql:dump.sql:12: ERROR:  … — and pg_dump: error:, mysqldump: Got error: 1045:
+  /\b(?:error|fatal):/i
+]
+
+/** The MySQL error number in one of those lines. */
+const MYSQL_CODE = /^ERROR (\d+)|\berror:? (\d+):|mysql\w*(?:\.exe)?: Couldn't execute .*\((\d+)\)\s*$/i
+
+const UNREACHABLE =
+  'The tool could not reach the server at the host and port in the command. Check that the server is running and reachable from this machine.'
+
+/** What usually lies behind the MySQL errors a dump or restore runs into most. */
+const MYSQL_HINTS: Record<number, string> = {
+  1045: 'The server turned down the user name or password. The tool signs in with the connection’s own credentials, so check them in its settings.',
+  1205: 'Another connection is holding locks on the rows this statement needs — usually a transaction left open in another client or app, or a large one still rolling back. performance_schema.data_locks shows which connection holds them; run this again once it lets go.',
+  1213: 'This statement deadlocked with another connection writing to the same tables, and MySQL rolled it back. Stop whatever else is writing to them, then run this again.',
+  1227: 'The user lacks a privilege a statement needs. In a dump that is usually SET @@GLOBAL.GTID_PURGED (export again with "Do not set GTID_PURGED") or a DEFINER naming another user on a view, trigger or routine.',
+  2002: UNREACHABLE,
+  2003: UNREACHABLE,
+  2005: UNREACHABLE
+}
+
+function hintFor(errorLine: string): string | null {
+  const code = Number(MYSQL_CODE.exec(errorLine)?.slice(1).find(Boolean))
+  return MYSQL_HINTS[code] ?? null
+}
+
+/** Longest line kept while looking; one that runs on is judged by its start. */
+const MAX_LINE = 4096
+
+/**
+ * Watches a tool's stderr for the first line reporting an error, so a failed
+ * run can say why instead of "exited with code 1". It sees every byte, including
+ * what the log stops showing, so a failure late in a chatty run still counts.
+ * The first error rather than the last, because later ones tend to follow from it.
+ */
+class ErrorLineWatch {
+  private partial = ''
+  private found: string | null = null
+
+  feed(text: string): void {
+    if (this.found !== null) return
+    const lines = (this.partial + text).split('\n')
+    this.partial = lines.pop()!.slice(0, MAX_LINE)
+    for (const line of lines) if (this.check(line)) return
+  }
+
+  /** The error line, once the stream has ended. */
+  finish(): string | null {
+    if (this.found === null && this.partial) this.check(this.partial)
+    this.partial = ''
+    return this.found
+  }
+
+  private check(line: string): boolean {
+    const text = line.trim()
+    if (!ERROR_LINES.some((pattern) => pattern.test(text))) return false
+    this.found = text.length > 500 ? `${text.slice(0, 500)}…` : text
+    return true
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Running
 // ---------------------------------------------------------------------------
 
@@ -341,6 +412,8 @@ export async function runTool(
       child.stdout?.on('data', forward('out'))
     }
     child.stderr?.on('data', forward('err'))
+    const errors = new ErrorLineWatch()
+    child.stderr?.on('data', (chunk: Buffer) => errors.feed(chunk.toString('utf8')))
 
     // --- input -----------------------------------------------------------
     let piped = 0
@@ -387,6 +460,9 @@ export async function runTool(
 
     clearInterval(timer)
     const bytes = inputTotal !== null ? piped : progressTarget ? await sizeOf(progressTarget) : 0
+    const error = result.code === 0 || entry.cancelled ? null : errors.finish()
+    const hint = error && hintFor(error)
+    if (hint) info(`Hint: ${hint}`)
     emit({
       runId,
       type: 'exit',
@@ -394,16 +470,17 @@ export async function runTool(
       signal: result.signal,
       cancelled: entry.cancelled,
       bytes,
-      durationMs: Date.now() - startedAt
+      durationMs: Date.now() - startedAt,
+      error
     })
   } catch (err) {
     const cancelled = entry.cancelled || err instanceof CancelledError
-    if (!cancelled) {
-      const message = (err as NodeJS.ErrnoException).code === 'ENOENT'
+    const message = cancelled
+      ? null
+      : (err as NodeJS.ErrnoException).code === 'ENOENT'
         ? `Could not start "${parseCommandLine(request.command).argv[0]}" — check the tool path.`
         : ((err as Error).message ?? String(err))
-      emit({ runId, type: 'output', stream: 'err', text: `${message}\n` })
-    }
+    if (message) emit({ runId, type: 'output', stream: 'err', text: `${message}\n` })
     emit({
       runId,
       type: 'exit',
@@ -411,7 +488,8 @@ export async function runTool(
       signal: null,
       cancelled,
       bytes: 0,
-      durationMs: Date.now() - startedAt
+      durationMs: Date.now() - startedAt,
+      error: message
     })
   } finally {
     running.delete(runId)

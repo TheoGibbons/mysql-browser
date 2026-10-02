@@ -893,7 +893,7 @@ export const useTransferStore = create<TransferStore>((set, get) => ({
             ? `${formatBytes(event.bytes)} · ${run.outputPath || 'done'}`
             : status === 'cancelled'
               ? 'Stopped'
-              : `Tool exited with code ${event.code ?? '?'}`,
+              : (event.error ?? `Tool exited with code ${event.code ?? '?'}`),
         durationMs: event.durationMs,
         fetchMs: 0
       })
