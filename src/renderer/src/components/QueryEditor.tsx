@@ -66,7 +66,7 @@ const sqlEngine = Facet.define<DbEngine, DbEngine>({
 
 export interface EditorApi {
   getSql(): string
-  /** Selected text, or `null` when the selection is empty. */
+  /** Selected text, or `null` when nothing but whitespace is selected. */
   getSelection(): string | null
   /** The statement the caret sits in. */
   getStatementAtCursor(): string | null
@@ -222,9 +222,24 @@ function findCaretStatement(state: EditorState): Statement | null {
 }
 
 /**
- * The statement the caret sits in. Kept in state so
- * the shading, the gutter dot and the editor API all name the same statement
- * from one document scan.
+ * Whether the main selection holds something to run. Whitespace alone doesn't
+ * count, so Ctrl+Enter falls back to the caret's statement instead of doing
+ * nothing. Walks the text rather than slicing it, since the gutter asks on
+ * every update and a select-all can be the whole document.
+ */
+function hasRunnableSelection(state: EditorState): boolean {
+  const { from, to } = state.selection.main
+  if (from === to) return false
+  for (const chunk = state.doc.iterRange(from, to); !chunk.next().done; ) {
+    if (/\S/.test(chunk.value)) return true
+  }
+  return false
+}
+
+/**
+ * The statement the caret sits in — the one Ctrl+Enter runs when nothing is
+ * selected. Kept in state so the shading, the gutter dot and the editor API
+ * all name the same statement from one document scan.
  *
  * Only recomputed when the caret actually leaves the statement, so arrowing
  * around inside one costs nothing.
@@ -348,7 +363,11 @@ const sqlLinter = linter(
   }
 )
 
-/** Shades the statement the caret is inside, like Workbench's current-statement marker. */
+/**
+ * Shades the statement the caret is inside, like Workbench's current-statement
+ * marker. Gone while there's a selection, since that's what Ctrl+Enter runs
+ * then — the shading always shows what will run.
+ */
 const currentStatementHighlight = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet
@@ -367,7 +386,7 @@ const currentStatementHighlight = ViewPlugin.fromClass(
       const builder = new RangeSetBuilder<Decoration>()
       const doc = view.state.doc
       const statement = view.state.field(caretStatement)
-      if (!statement) return builder.finish()
+      if (!statement || hasRunnableSelection(view.state)) return builder.finish()
 
       const fromLine = doc.lineAt(Math.min(statement.start, doc.length)).number
       const toLine = doc.lineAt(Math.min(statement.end, doc.length)).number
@@ -400,7 +419,7 @@ class ErrorMarker extends GutterMarker {
   }
 }
 
-/** Workbench's blue dot: the statement at the caret. */
+/** Workbench's blue dot: the statement Ctrl+Enter would run. */
 class CaretStatementMarker extends GutterMarker {
   eq(other: GutterMarker): boolean {
     return other instanceof CaretStatementMarker
@@ -418,8 +437,9 @@ const caretStatementMarker = new CaretStatementMarker()
 
 /**
  * The strip between the line numbers and the text: a red cross on any line
- * carrying a problem, otherwise a dot beside the statement being edited. The
- * cross wins, so a broken current statement reads as broken.
+ * carrying a problem, otherwise a dot beside the statement being edited — left
+ * off while there's a selection, like the shading. The cross wins, so a broken
+ * current statement reads as broken.
  */
 const statusGutter = gutter({
   class: 'cm-status-gutter',
@@ -442,7 +462,7 @@ const statusGutter = gutter({
     }
 
     const statement = state.field(caretStatement)
-    if (statement) {
+    if (statement && !hasRunnableSelection(state)) {
       const at = doc.lineAt(Math.min(statement.start, doc.length)).from
       if (!byLine.has(at)) markers.push(caretStatementMarker.range(at))
     }
@@ -546,7 +566,7 @@ export function QueryEditor({
               preventDefault: true,
               run: () => {
                 flush()
-                handlers.current.onExecuteAll()
+                handlers.current.onExecuteCurrent()
                 return true
               }
             },
@@ -555,7 +575,7 @@ export function QueryEditor({
               preventDefault: true,
               run: () => {
                 flush()
-                handlers.current.onExecuteCurrent()
+                handlers.current.onExecuteAll()
                 return true
               }
             },
@@ -594,8 +614,8 @@ export function QueryEditor({
     apiRef.current = {
       getSql: () => view.state.doc.toString(),
       getSelection: () => {
+        if (!hasRunnableSelection(view.state)) return null
         const { from, to } = view.state.selection.main
-        if (from === to) return null
         return view.state.sliceDoc(from, to)
       },
       getStatementAtCursor: () => view.state.field(caretStatement)?.text ?? null,

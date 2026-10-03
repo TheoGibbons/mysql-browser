@@ -157,12 +157,11 @@ export function ConnectionView({ conn }: Props): JSX.Element {
       const api = editorApi.current
       if (!api) return
 
-      let sql: string | null
-      if (mode === 'all') {
-        sql = api.getSelection() ?? api.getSql()
-      } else {
-        sql = api.getStatementAtCursor()
-      }
+      // 'all' is the whole script, selection or not. The others run the
+      // selection, falling back to the statement at the caret — so a lost
+      // selection costs one statement, never the whole script.
+      const sql =
+        mode === 'all' ? api.getSql() : (api.getSelection() ?? api.getStatementAtCursor())
       if (!sql || !sql.trim()) return
 
       // EXPLAIN never modifies; otherwise, gate modifying SQL behind the loud
@@ -591,15 +590,7 @@ function TabContent({
         <div className="pane-head">
           <button
             className="toolbar-btn"
-            title="Execute the selected portion of the script, or everything if nothing is selected (Ctrl+Enter)"
-            disabled={isRunning}
-            onClick={() => onExecute('all')}
-          >
-            <BoltIcon />
-          </button>
-          <button
-            className="toolbar-btn"
-            title="Execute the statement under the keyboard cursor (Ctrl+Shift+Enter)"
+            title="Execute the selection, or the statement under the keyboard cursor if nothing is selected (Ctrl+Enter)"
             disabled={isRunning}
             onClick={() => onExecute('current')}
           >
@@ -607,7 +598,15 @@ function TabContent({
           </button>
           <button
             className="toolbar-btn"
-            title="Execute EXPLAIN for the statement under the keyboard cursor"
+            title="Execute the whole script (Ctrl+Shift+Enter)"
+            disabled={isRunning}
+            onClick={() => onExecute('all')}
+          >
+            <BoltIcon />
+          </button>
+          <button
+            className="toolbar-btn"
+            title="Execute EXPLAIN for the selection, or the statement under the keyboard cursor if nothing is selected"
             disabled={isRunning}
             onClick={() => onExecute('explain')}
           >

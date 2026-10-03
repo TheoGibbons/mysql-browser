@@ -134,7 +134,7 @@ export const SettingsIcon = ({ size = 12, color = '#5a5a5a' }: IconProps): JSX.E
 export const BoltIcon = ({ size = 14, color = '#d99a1e' }: IconProps): JSX.Element =>
   svg(size, <path d="M9.4 1.2 3.4 9h3.4l-1.2 5.8L12.6 6.6H8.8l.6-5.4Z" fill={color} stroke="#a8740f" strokeWidth=".7" strokeLinejoin="round" />)
 
-/** Execute the statement under the caret. */
+/** Execute the selection, or the statement under the caret. */
 export const BoltCursorIcon = ({ size = 14, color = '#d99a1e' }: IconProps): JSX.Element =>
   svg(
     size,
@@ -144,7 +144,7 @@ export const BoltCursorIcon = ({ size = 14, color = '#d99a1e' }: IconProps): JSX
     </>
   )
 
-/** Explain the statement under the caret. */
+/** Explain the selection, or the statement under the caret. */
 export const BoltExplainIcon = ({ size = 14, color = '#d99a1e' }: IconProps): JSX.Element =>
   svg(
     size,
