@@ -68,11 +68,16 @@ export function initUpdater(): void {
 
 /** Safe to call at any time; resolves once the check settles. */
 export async function check(): Promise<UpdateState> {
-  if (!app.isPackaged) return state
+  if (!app.isPackaged) {
+    return { phase: 'error', message: 'Update checks are only available in installed builds.' }
+  }
+  // A manual or scheduled check must not reset an update already in progress.
+  if (state.phase === 'downloading' || state.phase === 'ready') return state
   try {
     await autoUpdater.checkForUpdates()
   } catch (err: any) {
     console.error('[updater] check failed', err?.message ?? err)
+    setState({ phase: 'error', message: err?.message ?? String(err) })
   }
   return state
 }

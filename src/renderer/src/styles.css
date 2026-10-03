@@ -1528,6 +1528,15 @@ textarea.field {
   margin-top: 4px;
 }
 
+.about-update-status {
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+  min-height: 2.7em;
+  margin-top: 8px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .home-head {
   display: flex;
   align-items: center;

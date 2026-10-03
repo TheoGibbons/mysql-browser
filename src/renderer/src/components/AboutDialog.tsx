@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import type { AppInfo } from '@shared/types'
+import type { AppInfo, UpdateState } from '@shared/types'
 import { Modal } from './ui/Modal'
 
 /** The app icon, inlined so the dialog doesn't depend on a packaged asset. */
@@ -32,6 +32,9 @@ function AppMark({ size = 56 }: { size?: number }): JSX.Element {
 
 export function AboutDialog({ onClose }: { onClose(): void }): JSX.Element {
   const [info, setInfo] = useState<AppInfo | null>(null)
+  const [updateState, setUpdateState] = useState<UpdateState | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [hasChecked, setHasChecked] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -43,14 +46,65 @@ export function AboutDialog({ onClose }: { onClose(): void }): JSX.Element {
     }
   }, [])
 
+  useEffect(() => {
+    let live = true
+    const unsubscribe = window.api.updates.onState(setUpdateState)
+    void window.api.updates.get()
+      .then((next) => {
+        // A live event or manual check may have already supplied a newer state.
+        if (live) setUpdateState((current) => current ?? next)
+      })
+      .catch((err: unknown) => {
+        if (live) {
+          setUpdateState((current) => current ?? {
+            phase: 'error',
+            message: err instanceof Error ? err.message : String(err)
+          })
+        }
+      })
+    return () => {
+      live = false
+      unsubscribe()
+    }
+  }, [])
+
+  const checkForUpdates = async (): Promise<void> => {
+    setChecking(true)
+    setHasChecked(true)
+    setUpdateState({ phase: 'checking' })
+    try {
+      setUpdateState(await window.api.updates.check())
+    } catch (err) {
+      setUpdateState({
+        phase: 'error',
+        message: err instanceof Error ? err.message : String(err)
+      })
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  const isChecking = checking || updateState?.phase === 'checking'
+
   return (
     <Modal
       title="About MySQL Browser"
       width={380}
       onClose={onClose}
-      onSubmit={onClose}
       footer={
         <>
+          <button
+            className="btn"
+            onClick={() => void checkForUpdates()}
+            disabled={
+              !updateState ||
+              isChecking ||
+              updateState.phase === 'downloading' ||
+              updateState.phase === 'ready'
+            }
+          >
+            {isChecking ? 'Checking…' : 'Check for new version'}
+          </button>
           <div className="spacer" />
           <button className="btn primary" onClick={onClose}>
             Close
@@ -68,6 +122,21 @@ export function AboutDialog({ onClose }: { onClose(): void }): JSX.Element {
             Electron {info.electron} · Chromium {info.chrome} · Node {info.node}
           </div>
         )}
+        <div
+          className="about-update-status"
+          role="status"
+          style={{ color: updateState?.phase === 'error' ? 'var(--error)' : undefined }}
+        >
+          {isChecking && 'Checking for a new version…'}
+          {!isChecking && updateState?.phase === 'idle' && hasChecked &&
+            'You’re using the latest version.'}
+          {!isChecking && updateState?.phase === 'downloading' &&
+            `Downloading version ${updateState.version} — ${updateState.percent}%`}
+          {!isChecking && updateState?.phase === 'ready' &&
+            `Version ${updateState.version} is ready. It will install when you close the app.`}
+          {!isChecking && updateState?.phase === 'error' &&
+            `Could not check for updates: ${updateState.message}`}
+        </div>
       </div>
     </Modal>
   )
