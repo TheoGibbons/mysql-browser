@@ -748,7 +748,8 @@ interface GridStore {
   get(key: string): GridState
   patch(key: string, patch: Partial<GridState>): void
   update(key: string, fn: (state: GridState) => GridState): void
-  reset(key: string): void
+  /** Clears edits and selection, keeping sort and widths unless `clearSort`. */
+  reset(key: string, options?: { clearSort?: boolean }): void
   drop(key: string): void
 }
 
@@ -773,14 +774,19 @@ export const useGridStore = create<GridStore>((set, get) => ({
     }))
   },
 
-  reset(key) {
+  reset(key, options = {}) {
     set((state) => {
       const previous = state.states[key] ?? emptyGridState()
-      // Keep view-only preferences (sort, widths) across a revert.
+      // Keep view-only preferences (sort, widths) across a revert. A fresh run
+      // drops the sort, which would otherwise override the query's ORDER BY.
       return {
         states: {
           ...state.states,
-          [key]: { ...emptyGridState(), sort: previous.sort, columnWidths: previous.columnWidths }
+          [key]: {
+            ...emptyGridState(),
+            sort: options.clearSort ? null : previous.sort,
+            columnWidths: previous.columnWidths
+          }
         }
       }
     })

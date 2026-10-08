@@ -144,8 +144,9 @@ export function ConnectionView({ conn }: Props): JSX.Element {
   const runResolved = useCallback(
     (sql: string, explain: boolean) => {
       if (!activeTabId) return
-      // Fresh results invalidate any pending edits on the old ones.
-      resetGrid(gridKey(sessionId, activeTabId))
+      // Fresh results invalidate any pending edits on the old ones, and the
+      // query's own ORDER BY should win over a header sort picked for them.
+      resetGrid(gridKey(sessionId, activeTabId), { clearSort: true })
       void runQuery(sessionId, activeTabId, sql, { explain })
     },
     [activeTabId, resetGrid, runQuery, sessionId]
