@@ -614,7 +614,7 @@ function TabContent({
             <BoltExplainIcon />
           </button>
           <button
-            className="toolbar-btn"
+            className="toolbar-btn stop-btn"
             title="Stop the query being executed"
             disabled={!isRunning}
             onClick={onCancel}

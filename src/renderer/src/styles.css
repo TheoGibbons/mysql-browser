@@ -241,6 +241,11 @@ textarea {
   opacity: 0.4;
 }
 
+/* Solid red still reads as "live" at 0.4, so an idle Stop fades further. */
+.toolbar-btn.stop-btn:disabled {
+  opacity: 0.2;
+}
+
 .toolbar-sep {
   width: 1px;
   height: 16px;
