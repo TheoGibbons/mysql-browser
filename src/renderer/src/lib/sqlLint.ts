@@ -471,6 +471,75 @@ function checkCommas(tokens: Token[], out: SqlDiagnostic[]): void {
 }
 
 /**
+ * What each clause has to hold, keyed by the word that opens it. `SELECT` is
+ * only checked for MySQL: Postgres accepts an empty select list, so
+ * `SELECT FROM t` is a valid query there.
+ */
+const CLAUSE_BODIES: Record<string, string> = {
+  SELECT: 'a column list',
+  FROM: 'a table',
+  WHERE: 'a condition',
+  GROUP: 'an expression',
+  HAVING: 'a condition',
+  ORDER: 'an expression',
+  LIMIT: 'a row count'
+}
+
+/** Modifiers that can sit between `SELECT` and its column list. */
+const SELECT_MODIFIERS = new Set(['ALL', 'DISTINCT', 'DISTINCTROW'])
+
+/**
+ * Words that start the next clause, so the one before them has ended. `OFFSET`
+ * and `WINDOW` are left out because MySQL accepts both as column names (`WINDOW`
+ * before 8.0.2), and `SELECT offset FROM t` is a valid query.
+ */
+const CLAUSE_ENDS = new Set(['FROM', 'WHERE', 'GROUP', 'HAVING', 'ORDER', 'LIMIT', 'UNION'])
+
+function endsClause(tokens: Token[], i: number): boolean {
+  const token = tokens[i]
+  // Running out of tokens is `checkTail`'s business, and it hushes that while
+  // the statement is being typed.
+  if (!token) return false
+  if (token.kind === 'punct') return token.text === ')'
+  if (token.kind !== 'word' || !CLAUSE_ENDS.has(token.key)) return false
+  if (token.key === 'GROUP' || token.key === 'ORDER') return tokens[i + 1]?.key === 'BY'
+  return true
+}
+
+/**
+ * Catches a clause with nothing in it: `SELECT FROM t`, `WHERE ORDER BY x`,
+ * `IN (SELECT)`. Not marked incomplete: typing left to right never leaves the
+ * next clause sitting straight after an empty one.
+ */
+function checkEmptyClauses(tokens: Token[], engine: DbEngine, out: SqlDiagnostic[]): void {
+  for (let i = 0; i < tokens.length; i++) {
+    const head = tokens[i]
+    if (head.kind !== 'word') continue
+    const body = CLAUSE_BODIES[head.key]
+    if (body === undefined) continue
+    if (head.key === 'SELECT' && engine === 'postgres') continue
+    // After a dot it's a column, not a clause: MySQL accepts `t.limit` unquoted.
+    if (tokens[i - 1]?.text === '.') continue
+
+    let last = i
+    if (head.key === 'GROUP' || head.key === 'ORDER') {
+      if (tokens[i + 1]?.key !== 'BY') continue
+      last = i + 1
+    } else if (head.key === 'SELECT') {
+      while (SELECT_MODIFIERS.has(tokens[last + 1]?.key ?? '')) last++
+    }
+    if (!endsClause(tokens, last + 1)) continue
+
+    out.push({
+      from: head.from,
+      to: tokens[last].to,
+      message: `Expected ${body} after ${clauseLabel(head.key)}`,
+      incomplete: false
+    })
+  }
+}
+
+/**
  * Words that can never be the last thing in a statement. Kept short on
  * purpose: `SET` (`SHOW CHARACTER SET`), `ALL` (`LIMIT ALL`), `UPDATE`
  * (`FOR UPDATE`) and `VALUES` (`DEFAULT VALUES`) all end valid statements.
@@ -696,6 +765,7 @@ function lintStatement(
   checkClauseOrder(tokens, ranks, out)
   checkOrderBy(tokens, out)
   checkCommas(tokens, out)
+  checkEmptyClauses(tokens, engine, out)
   checkTail(tokens, out)
   return out
 }
