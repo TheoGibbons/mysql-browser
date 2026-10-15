@@ -208,6 +208,9 @@ export function registerIpc(): void {
   handle('session:cancel', (sessionId: string, tabId: string) =>
     requireSession(sessionId).cancel(tabId)
   )
+  handle('session:check', (sessionId: string, statements: string[]) =>
+    requireSession(sessionId).check(statements)
+  )
 
   // --- metadata ----------------------------------------------------------
 

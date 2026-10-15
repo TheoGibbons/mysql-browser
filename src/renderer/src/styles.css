@@ -585,7 +585,8 @@ textarea {
   background: var(--accent);
 }
 
-.cm-lint-error {
+.cm-lint-error,
+.cm-lint-warning {
   display: block;
   width: 11px;
   height: 11px;
@@ -600,10 +601,15 @@ textarea {
   cursor: help;
 }
 
+.cm-lint-warning {
+  background: var(--warn);
+}
+
 /* The squiggle itself. `text-decoration` keeps it hugging the glyphs, so it
    survives the editor's line wrapping where a background image would not —
    which is why lint's own background-image squiggle is switched off below. */
-.cm-sql-error {
+.cm-sql-error,
+.cm-sql-warning {
   text-decoration-line: underline;
   text-decoration-style: wavy;
   text-decoration-color: var(--error);
@@ -612,7 +618,13 @@ textarea {
   text-underline-offset: 3px;
 }
 
-.cm-lintRange.cm-sql-error {
+/* A name the server couldn't resolve — maybe a typo, maybe created later on. */
+.cm-sql-warning {
+  text-decoration-color: var(--warn);
+}
+
+.cm-lintRange.cm-sql-error,
+.cm-lintRange.cm-sql-warning {
   background-image: none;
   padding-bottom: 0;
 }
@@ -635,6 +647,10 @@ textarea {
 
 .cm-diagnostic-error {
   border-left: 3px solid var(--error);
+}
+
+.cm-diagnostic-warning {
+  border-left: 3px solid var(--warn);
 }
 
 .cm-diagnosticSource {

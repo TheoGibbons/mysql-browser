@@ -6,6 +6,7 @@ import type {
   QueryOutcome,
   SchemaInfo,
   SessionStatus,
+  StatementCheck,
   TableDefinition
 } from './types'
 
@@ -21,6 +22,7 @@ export type WorkerRequest =
   | { id: number; type: 'test' }
   | { id: number; type: 'query'; tabId: string; sql: string; limitRows?: number }
   | { id: number; type: 'cancel'; tabId: string }
+  | { id: number; type: 'check'; statements: string[] }
   | { id: number; type: 'listSchemas' }
   | { id: number; type: 'tableDefinition'; schema: string; table: string }
   | { id: number; type: 'tableColumns'; schema: string; table: string }
@@ -62,6 +64,8 @@ export interface WorkerResults {
   test: { serverVersion: string; latencyMs: number }
   query: QueryOutcome
   cancel: { killed: boolean }
+  /** One verdict per statement, in the order they were sent. */
+  check: StatementCheck[]
   listSchemas: SchemaInfo[]
   tableDefinition: TableDefinition
   tableColumns: string[]

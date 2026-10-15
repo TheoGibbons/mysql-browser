@@ -5,7 +5,12 @@
 
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
-import type { ConnectionConfig, Preferences, SessionStatus } from '@shared/types'
+import type {
+  ConnectionConfig,
+  Preferences,
+  SessionStatus,
+  StatementCheck
+} from '@shared/types'
 import type {
   WorkerEvent,
   WorkerMessage,
@@ -232,6 +237,13 @@ export class Session {
 
   cancel(tabId: string) {
     return this.send<'cancel'>({ type: 'cancel', tabId })
+  }
+
+  check(statements: string[]): Promise<StatementCheck[]> {
+    // `send` would spawn a worker for a closed session — and a fresh worker
+    // has no tunnel to dial through. An unconnected session has no opinion.
+    if (!this.isConnected) return Promise.resolve(statements.map(() => ({ verdict: 'unknown' })))
+    return this.send<'check'>({ type: 'check', statements })
   }
 
   listSchemas() {

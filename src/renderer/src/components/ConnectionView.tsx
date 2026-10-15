@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format as formatSql } from 'sql-formatter'
-import type { DesignerState, QueryTabState } from '@shared/types'
+import type { DesignerState, QueryTabState, StatementCheck } from '@shared/types'
 import { modifyReason, statementAt, type ModifyReason } from '@shared/sql'
 import { dialectFor } from '@shared/dialect'
 import { gridKey, useAppStore, useGridStore, type ConnTab, type NewTabOptions } from '../store'
@@ -138,6 +138,19 @@ export function ConnectionView({ conn }: Props): JSX.Element {
       void useAppStore.getState().loadSchemaColumns(sessionId, conn.activeSchema)
     }
   }, [conn.activeSchema, sessionId, status])
+
+  // The editor's live check: the server prepares each statement without
+  // running it. Rebuilt — which has the editor check everything again — when
+  // the schema moves, and when a run starts or ends, since a run can create or
+  // drop the very tables a statement names. MySQL only, for now.
+  const checkStatements = useMemo(
+    () =>
+      status === 'connected' && engine === 'mysql'
+        ? (statements: string[]): Promise<StatementCheck[]> =>
+            window.api.session.check(sessionId, statements)
+        : null,
+    [status, engine, sessionId, running, conn.activeSchema]
+  )
 
   // --- execution ----------------------------------------------------------
 
@@ -431,6 +444,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
               canEdit={canEdit}
               dirty={dirty}
               completionSchema={completionSchema}
+              checkStatements={checkStatements}
               editorApi={editorApi}
               onSqlChange={(sql) => updateTab(sessionId, activeTab.id, { sql })}
               onDesignerChange={(designer) => updateTab(sessionId, activeTab.id, { designer })}
@@ -517,6 +531,7 @@ interface TabContentProps {
   canEdit: boolean
   dirty: boolean
   completionSchema: Record<string, Record<string, string[]>>
+  checkStatements: ((statements: string[]) => Promise<StatementCheck[]>) | null
   editorApi: React.MutableRefObject<EditorApi | null>
   onSqlChange(sql: string): void
   onDesignerChange(designer: DesignerState): void
@@ -542,6 +557,7 @@ function TabContent({
   canEdit,
   dirty,
   completionSchema,
+  checkStatements,
   editorApi,
   onSqlChange,
   onDesignerChange,
@@ -648,6 +664,7 @@ function TabContent({
           background={isValidHex(conn.config.color) ? tint(conn.config.color!, 0.14) : undefined}
           engine={engine}
           failure={tab.failure ?? null}
+          checkStatements={checkStatements}
         />
       </div>
 

@@ -492,6 +492,24 @@ export interface QueryFailure {
   message: string
 }
 
+/**
+ * What the server made of a statement it was asked to prepare but not run.
+ *
+ * `ok` means it parsed and every name in it resolved. `unknown` means the
+ * server couldn't say — the statement can't be prepared, a lock was in the way,
+ * the user lacks the privilege — so the editor falls back to its own rules.
+ */
+export type StatementCheck =
+  | { verdict: 'ok' }
+  | { verdict: 'unknown' }
+  | {
+      /** A syntax error is an `error`; a name that doesn't resolve is a `warning`. */
+      verdict: 'error' | 'warning'
+      message: string
+      /** 1-based offset into the statement the problem starts at, when known. */
+      position: number | null
+    }
+
 export interface QueryTabState {
   id: string
   kind: TabKind

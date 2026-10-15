@@ -19,6 +19,7 @@ import type {
   QueryOutcome,
   ResultSet,
   SchemaInfo,
+  StatementCheck,
   TableDefinition
 } from '@shared/types'
 import type { WorkerEvent, WorkerInit, WorkerRequest, WorkerResponse } from '@shared/worker-protocol'
@@ -177,6 +178,8 @@ async function disconnect(): Promise<void> {
   if (control) all.push(control)
   control = null
   controlDead = false
+  if (checker) all.push(checker.conn)
+  checker = null
 
   await Promise.all(
     all.map((c) =>
@@ -440,6 +443,86 @@ async function runQuery(tabId: string, sql: string, limitRows?: number): Promise
 }
 
 // ---------------------------------------------------------------------------
+// Statement checks
+// ---------------------------------------------------------------------------
+
+/**
+ * The editor's live check gets a connection of its own: it must never queue
+ * behind a tab's long query, nor see inside a tab's open transaction. It only
+ * ever prepares statements — nothing sent on it is run.
+ */
+let checker: { conn: DriverConnection; dead: boolean; schema: string | undefined } | null = null
+/** Checks run one at a time, so the connection is opened once and never raced. */
+let checkQueue: Promise<unknown> = Promise.resolve()
+
+/** A check the server hasn't answered by now is stuck on a dead socket. */
+const CHECK_TIMEOUT_MS = 5000
+
+async function checkerConnection(): Promise<DriverConnection> {
+  if (checker && !checker.dead && checker.conn.isUsable() && checker.schema === currentSchema) {
+    return checker.conn
+  }
+  // Reopened rather than switched with `USE`, which keeps this engine-neutral:
+  // a new connection starts in `currentSchema`, so unqualified names resolve
+  // just as they would if the statement were run.
+  discard(checker?.conn ?? null)
+  checker = null
+  const entry = {
+    conn: null as unknown as DriverConnection,
+    dead: false,
+    schema: currentSchema
+  }
+  entry.conn = await driver.open(() => {
+    entry.dead = true
+  })
+  checker = entry
+  return entry.conn
+}
+
+async function checkOnce(check: NonNullable<Driver['checkStatement']>, sql: string): Promise<StatementCheck> {
+  const conn = await checkerConnection()
+  let timer: NodeJS.Timeout | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      if (checker?.conn === conn) checker.dead = true
+      discard(conn)
+      reject(new Error('The statement check timed out'))
+    }, CHECK_TIMEOUT_MS)
+  })
+  try {
+    return await Promise.race([check.call(driver, conn, sql), timeout])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function checkBatch(statements: string[]): Promise<StatementCheck[]> {
+  const check = driver.checkStatement
+  if (!check) return statements.map(() => ({ verdict: 'unknown' }))
+  if (closed || !control) throw new Error('Not connected')
+
+  const verdicts: StatementCheck[] = []
+  for (const sql of statements) {
+    try {
+      verdicts.push(await checkOnce(check, sql))
+    } catch (err) {
+      // Preparing has no side effects, so a statement that met a dropped
+      // socket can always go again on a fresh connection.
+      if (closed || !driver.isConnectionLost(err)) throw err
+      if (checker) checker.dead = true
+      verdicts.push(await checkOnce(check, sql))
+    }
+  }
+  return verdicts
+}
+
+function checkStatements(statements: string[]): Promise<StatementCheck[]> {
+  const run = checkQueue.then(() => checkBatch(statements))
+  checkQueue = run.catch(() => undefined)
+  return run
+}
+
+// ---------------------------------------------------------------------------
 // Metadata
 // ---------------------------------------------------------------------------
 
@@ -500,6 +583,8 @@ async function handle(req: WorkerRequest): Promise<unknown> {
       return runQuery(req.tabId, req.sql, req.limitRows)
     case 'cancel':
       return cancelTab(req.tabId)
+    case 'check':
+      return checkStatements(req.statements)
     case 'listSchemas':
       return withControl((c): Promise<SchemaInfo[]> => driver.listSchemas(c))
     case 'tableDefinition':

@@ -8,6 +8,7 @@ import type {
   ForeignKeyInfo,
   IndexInfo,
   SchemaInfo,
+  StatementCheck,
   TableDefinition
 } from '@shared/types'
 import type { Driver, DriverConnection, DriverContext, RawResult } from '../driver'
@@ -37,6 +38,41 @@ const LOST_CONNECTION_CODES = new Set([
   'ENETRESET',
   'ER_CLIENT_INTERACTION_TIMEOUT'
 ])
+
+const ER_PARSE_ERROR = 1064
+const ER_BAD_FIELD_ERROR = 1054
+const ER_NO_SUCH_TABLE = 1146
+const ER_BAD_DB_ERROR = 1049
+
+/** Names the server couldn't resolve, and how to pull the name out of its message. */
+const UNRESOLVED_NAMES: Record<number, RegExp> = {
+  [ER_BAD_FIELD_ERROR]: /^Unknown column '(.+?)' in /,
+  [ER_NO_SUCH_TABLE]: /^Table '(.+?)' doesn't exist/,
+  [ER_BAD_DB_ERROR]: /^Unknown database '(.+?)'/
+}
+
+/**
+ * Where a name the server complained about appears in `sql`, as a 1-based
+ * offset. The server echoes `e.nope` or `db.table`, which may have been written
+ * with backticks or spaces around the dots, or (for a table) without the schema
+ * at all, so the full name is tried first and then its last part on its own.
+ */
+function namePosition(sql: string, name: string): number | null {
+  const parts = name.split('.')
+  const pattern = (names: string[]): RegExp =>
+    new RegExp(
+      `(?<![\\w$\`])${names
+        .map((part) => '`?' + part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '`?')
+        .join('\\s*\\.\\s*')}(?![\\w$])`,
+      'i'
+    )
+
+  for (const candidate of [parts, parts.slice(-1)]) {
+    const match = pattern(candidate).exec(sql)
+    if (match) return match.index + 1
+  }
+  return null
+}
 
 /** Small payloads inline as hex; anything larger is described, not dumped. */
 function hexOrSummary(field: any, noun: string): string | null {
@@ -143,6 +179,20 @@ class MysqlConnection implements DriverConnection {
     this.conn.destroy()
   }
 
+  /**
+   * Prepares `sql` and throws it away again. `unprepare` rather than closing
+   * the statement handle, because mysql2 caches a successful prepare and would
+   * answer the next check of the same text from that cache, long after a
+   * `DROP TABLE` made it wrong.
+   */
+  async prepareOnly(sql: string): Promise<void> {
+    try {
+      await this.conn.prepare(sql)
+    } finally {
+      this.conn.unprepare(sql)
+    }
+  }
+
   /** False as soon as mysql2 knows the socket has errored, closed, or been destroyed. */
   isUsable(): boolean {
     const core = (this.conn as unknown as { connection?: { state?: string } }).connection
@@ -156,6 +206,9 @@ class MysqlConnection implements DriverConnection {
 
 export class MysqlDriver implements Driver {
   readonly engine = 'mysql' as const
+
+  /** Connections already told not to wait out a metadata lock; see `checkStatement`. */
+  private readonly checkConnections = new WeakSet<DriverConnection>()
 
   constructor(private readonly ctx: DriverContext) {}
 
@@ -312,6 +365,43 @@ export class MysqlDriver implements Driver {
     // fall back to the whole statement before giving up.
     const anywhere = sql.indexOf(needle)
     return anywhere >= 0 ? anywhere + 1 : null
+  }
+
+  /**
+   * `COM_STMT_PREPARE` parses the statement and resolves every table and column
+   * in it, but executes nothing — preparing a `DELETE` deletes no rows. A
+   * syntax error is the server's own grammar talking, so it's an error; a name
+   * that doesn't resolve is only a warning, since an earlier statement in the
+   * script, or a temporary table, may yet create it.
+   */
+  async checkStatement(conn: DriverConnection, sql: string): Promise<StatementCheck> {
+    if (!this.checkConnections.has(conn)) {
+      // Preparing takes shared metadata locks, so it queues behind an `ALTER
+      // TABLE` that is waiting for its exclusive one — by default for a year.
+      // A check is advice; it gives up after a second and says nothing.
+      await conn.query('SET SESSION lock_wait_timeout = 1')
+      this.checkConnections.add(conn)
+    }
+
+    try {
+      await (conn as MysqlConnection).prepareOnly(sql)
+      return { verdict: 'ok' }
+    } catch (err: any) {
+      if (this.isConnectionLost(err)) throw err
+      const message = String(err?.sqlMessage || err?.message || '')
+
+      if (err?.errno === ER_PARSE_ERROR) {
+        // `near ''` means the server ran out of statement: the problem is at
+        // the very end, which `errorPosition` has no snippet to find.
+        const atEnd = /near '' at line \d+/.test(message)
+        const position = atEnd ? sql.length + 1 : this.errorPosition(err, sql)
+        return { verdict: 'error', message, position }
+      }
+
+      const name = UNRESOLVED_NAMES[err?.errno]?.exec(message)?.[1]
+      if (name === undefined) return { verdict: 'unknown' }
+      return { verdict: 'warning', message, position: namePosition(sql, name) }
+    }
   }
 
   // --- catalogue ---------------------------------------------------------

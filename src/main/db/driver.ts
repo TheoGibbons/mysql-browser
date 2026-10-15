@@ -15,6 +15,7 @@ import type {
   DbEngine,
   Preferences,
   SchemaInfo,
+  StatementCheck,
   TableDefinition
 } from '@shared/types'
 import type { Tunnel } from './tunnel'
@@ -100,6 +101,15 @@ export interface Driver {
    * objected to, in the server's own words, instead of guessing.
    */
   errorPosition(err: unknown, sql: string): number | null
+
+  /**
+   * Asks the server what it makes of one statement by preparing it, without
+   * ever running it. Behind the editor's live syntax and name checks.
+   *
+   * Throws only when the connection itself failed. Engines without it get no
+   * server-side check, and the editor keeps to its own rules.
+   */
+  checkStatement?(conn: DriverConnection, sql: string): Promise<StatementCheck>
 
   // --- catalogue ---------------------------------------------------------
   listSchemas(conn: DriverConnection): Promise<SchemaInfo[]>

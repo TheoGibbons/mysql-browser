@@ -12,6 +12,7 @@ import type {
   SessionMeta,
   SessionStatus,
   SessionStatusEvent,
+  StatementCheck,
   TableDefinition,
   ToolRunEvent,
   ToolSettings,
@@ -112,6 +113,9 @@ const api = {
       call<QueryOutcome>('session:query', sessionId, tabId, sql, limitRows),
     cancel: (sessionId: string, tabId: string) =>
       call<{ killed: boolean }>('session:cancel', sessionId, tabId),
+    /** Prepares each statement on the server without running it. */
+    check: (sessionId: string, statements: string[]) =>
+      call<StatementCheck[]>('session:check', sessionId, statements),
 
     schemas: (sessionId: string) => call<SchemaInfo[]>('session:schemas', sessionId),
     tableDefinition: (sessionId: string, schema: string, table: string) =>

@@ -14,7 +14,7 @@
  */
 
 import { opensEscapeString, splitStatements, type Statement } from '@shared/sql'
-import type { DbEngine } from '@shared/types'
+import type { DbEngine, StatementCheck } from '@shared/types'
 
 export interface SqlDiagnostic {
   /** Absolute document offsets of the text to underline. */
@@ -27,6 +27,8 @@ export interface SqlDiagnostic {
    * inside the statement they're about, so typing doesn't light up in red.
    */
   incomplete: boolean
+  /** Only the server's "that name doesn't exist" is a warning; the rest are errors. */
+  severity?: 'error' | 'warning'
 }
 
 /** Past this the linter stands down; a dump this big isn't being hand-edited. */
@@ -49,8 +51,11 @@ interface Token {
 interface Lexed {
   tokens: Token[]
   errors: SqlDiagnostic[]
-  /** A literal or comment ran off the end, so the token stream can't be trusted. */
-  truncated: boolean
+  /**
+   * Where a literal or comment that never closed opens, as a document offset.
+   * Everything after it was swallowed, so the token stream can't be trusted.
+   */
+  openAt: number | null
 }
 
 /** Matches the opening of a Postgres dollar-quoted body: `$$` or `$tag$`. */
@@ -87,7 +92,7 @@ function lex(sql: string, base: number, engine: DbEngine): Lexed {
   const errors: SqlDiagnostic[] = []
   /** Offsets of the `(`s still waiting for a partner. */
   const unclosed: number[] = []
-  let truncated = false
+  let openAt: number | null = null
   let i = 0
 
   const fail = (from: number, to: number, message: string, incomplete: boolean): void => {
@@ -142,7 +147,7 @@ function lex(sql: string, base: number, engine: DbEngine): Lexed {
       }
       if (depth > 0) {
         fail(start, markToLineEnd(sql, start), 'Unterminated block comment — missing */', true)
-        truncated = true
+        openAt = base + start
       }
       continue
     }
@@ -155,7 +160,7 @@ function lex(sql: string, base: number, engine: DbEngine): Lexed {
         const close = sql.indexOf(tag[0], i + tag[0].length)
         if (close < 0) {
           fail(i, markToLineEnd(sql, i), `Unterminated ${tag[0]} quoted string`, true)
-          truncated = true
+          openAt = base + i
           i = sql.length
         } else {
           push('string', i, close + tag[0].length)
@@ -209,7 +214,7 @@ function lex(sql: string, base: number, engine: DbEngine): Lexed {
             : `Unterminated string — missing closing ${quote}`,
           true
         )
-        truncated = true
+        openAt = base + start
         continue
       }
       push(identifier ? 'quoted' : 'string', start, i)
@@ -304,7 +309,7 @@ function lex(sql: string, base: number, engine: DbEngine): Lexed {
     fail(at, at + 1, "Unclosed '(' — missing closing parenthesis", true)
   }
 
-  return { tokens, errors, truncated }
+  return { tokens, errors, openAt }
 }
 
 // ------------------------------------------------------------------- rules
@@ -695,17 +700,26 @@ function checkStarter(tokens: Token[], out: SqlDiagnostic[]): void {
 /** A `DELIMITER` line means the `;` splitter is wrong about everything. */
 const HAS_DELIMITER = /^[ \t]*DELIMITER\b/im
 
+/** Verdicts the server has given, keyed by the exact statement text it saw. */
+export type StatementChecks = ReadonlyMap<string, StatementCheck>
+
+const NO_CHECKS: StatementChecks = new Map()
+
 /**
  * Checks a whole editor buffer, statement by statement.
  *
  * `caret` suppresses the "incomplete" diagnostics for the statement being
  * edited: half-typed SQL is unfinished, not wrong, and marking it red on every
  * keystroke is what makes this kind of feature unbearable.
+ *
+ * `checks` holds what the server said when it prepared each statement (see
+ * `checkableStatements`). Where it gave a verdict, that replaces the rules here.
  */
 export function lintSql(
   sql: string,
   engine: DbEngine,
-  caret: number | null = null
+  caret: number | null = null,
+  checks: StatementChecks = NO_CHECKS
 ): SqlDiagnostic[] {
   if (sql.length === 0 || sql.length > MAX_LINT_LENGTH) return []
   if (HAS_DELIMITER.test(sql)) return []
@@ -715,7 +729,8 @@ export function lintSql(
 
   for (const statement of splitStatements(sql, engine)) {
     const editing = isBeingEdited(sql, statement, caret)
-    for (const diagnostic of lintStatement(statement, ranks, engine)) {
+    const check = checks.get(statement.text)
+    for (const diagnostic of lintStatement(statement, ranks, engine, check)) {
       if (diagnostic.incomplete && editing) continue
       found.push(diagnostic)
     }
@@ -731,6 +746,20 @@ export function lintSql(
     if (seen.has(key)) return false
     seen.add(key)
     return true
+  })
+}
+
+/**
+ * The statements worth asking the server about. The same ones the rules read,
+ * so routine-body fragments and `DELIMITER` scripts — which the server would
+ * reject piece by piece — are left out here too.
+ */
+export function checkableStatements(sql: string, engine: DbEngine): Statement[] {
+  if (sql.length === 0 || sql.length > MAX_LINT_LENGTH) return []
+  if (HAS_DELIMITER.test(sql)) return []
+  return splitStatements(sql, engine).filter((statement) => {
+    const { tokens } = lex(statement.text, statement.start, engine)
+    return tokens.length > 0 && !isRoutineFragment(tokens)
   })
 }
 
@@ -752,13 +781,24 @@ function isBeingEdited(sql: string, statement: Statement, caret: number | null):
 function lintStatement(
   statement: Statement,
   ranks: Record<string, number>,
-  engine: DbEngine
+  engine: DbEngine,
+  check: StatementCheck | undefined
 ): SqlDiagnostic[] {
-  const { tokens, errors, truncated } = lex(statement.text, statement.start, engine)
+  const lexed = lex(statement.text, statement.start, engine)
+  const { tokens, errors, openAt } = lexed
+  if (tokens.length === 0) return errors
+  if (isRoutineFragment(tokens)) return errors
+
+  // The rules below only approximate the server's grammar, and the server has
+  // just parsed this exact text — so its verdict wins, false alarms and all.
+  if (check && check.verdict !== 'unknown') {
+    const fromServer = check.verdict === 'ok' ? null : serverDiagnostic(statement, lexed, check)
+    return fromServer ? [...errors, fromServer] : errors
+  }
+
   // A runaway literal swallowed the rest of the text; nothing after it means
   // anything, so report that on its own.
-  if (truncated || tokens.length === 0) return errors
-  if (isRoutineFragment(tokens)) return errors
+  if (openAt !== null) return errors
 
   const out = [...errors]
   checkStarter(tokens, out)
@@ -768,4 +808,58 @@ function lintStatement(
   checkEmptyClauses(tokens, engine, out)
   checkTail(tokens, out)
   return out
+}
+
+/**
+ * Places the server's complaint. MySQL names the spot by quoting the text from
+ * there on, which `checkStatement` has already turned into an offset.
+ */
+function serverDiagnostic(
+  statement: Statement,
+  { tokens, openAt }: Lexed,
+  check: Extract<StatementCheck, { message: string }>
+): SqlDiagnostic | null {
+  const base = {
+    message: check.message,
+    severity: check.verdict
+  }
+
+  // Past the end means the server ran out of statement (`near ''`); with no
+  // position at all there's no telling. Either way it could just be unfinished.
+  if (check.position === null || check.position > statement.text.length) {
+    // Running out of statement inside a literal that never closed is the
+    // literal's fault, and the lexer has already said so.
+    if (check.position !== null && openAt !== null) return null
+    const at = check.position === null ? tokens[0] : tokens[tokens.length - 1]
+    return { ...base, from: at.from, to: at.to, incomplete: true }
+  }
+
+  const offset = check.position - 1
+  const from = statement.start + offset
+  // A literal left open swallows everything after it, and so anything the
+  // server says from there on; the lexer's "Unterminated string" says it better.
+  if (openAt !== null && from >= openAt) return null
+
+  // Underline the whole token, through any `a.b.c` it heads.
+  let last = tokens.findIndex((t) => t.from <= from && from < t.to)
+  if (last >= 0 && tokens[last].kind !== 'punct') {
+    while (tokens[last + 1]?.text === '.' && tokens[last + 2] && tokens[last + 2].kind !== 'punct') {
+      last += 2
+    }
+  }
+
+  return {
+    ...base,
+    from,
+    to: last >= 0 ? tokens[last].to : from + 1,
+    incomplete:
+      // Choking on the final word may only mean it's half typed — `e.nam` on
+      // its way to `e.name`, `ORD` to `ORDER BY`.
+      !/\s/.test(statement.text.slice(offset).trimEnd()) ||
+      // Typed left to right, a select list comes before the FROM that gives
+      // its columns meaning; until then every one of them is "unknown".
+      (check.verdict === 'warning' &&
+        tokens[0].key === 'SELECT' &&
+        !tokens.some((t) => t.key === 'FROM'))
+  }
 }

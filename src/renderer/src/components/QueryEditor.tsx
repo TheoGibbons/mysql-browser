@@ -50,10 +50,15 @@ import {
 import { tags } from '@lezer/highlight'
 import { referencedTables, statementAt } from '@shared/sql'
 import type { Statement } from '@shared/sql'
-import type { DbEngine, QueryFailure } from '@shared/types'
+import type { DbEngine, QueryFailure, StatementCheck } from '@shared/types'
 import { forEachDiagnostic, linter, lintKeymap } from '@codemirror/lint'
 import type { Diagnostic } from '@codemirror/lint'
-import { lintSql, type SqlDiagnostic } from '../lib/sqlLint'
+import {
+  checkableStatements,
+  lintSql,
+  type SqlDiagnostic,
+  type StatementChecks
+} from '../lib/sqlLint'
 
 /**
  * The connection's engine, carried in editor state so the statement-splitting
@@ -94,7 +99,15 @@ interface Props {
   engine: DbEngine
   /** The last failed run, marked in the editor with the server's own message. */
   failure?: QueryFailure | null
+  /**
+   * Has the server prepare (never run) each statement, for live syntax errors
+   * and unknown-name warnings. Null while that isn't possible. A new function
+   * means the verdicts so far may be stale, and everything is checked again.
+   */
+  checkStatements?: CheckStatements | null
 }
+
+type CheckStatements = (statements: string[]) => Promise<StatementCheck[]>
 
 interface CompletionContextData {
   schema: Record<string, Record<string, string[]>>
@@ -274,6 +287,132 @@ const queryFailure = StateField.define<QueryFailure | null>({
 })
 
 /**
+ * What the server made of each statement, by statement text. Text rather than
+ * offsets, so a verdict follows its statement around as the buffer is edited,
+ * and simply stops applying once the statement's text changes.
+ */
+const setServerChecks = StateEffect.define<StatementChecks>()
+
+const serverChecks = StateField.define<StatementChecks>({
+  create: () => new Map(),
+  update: (value, tr) => {
+    for (const effect of tr.effects) {
+      if (effect.is(setServerChecks)) return effect.value
+    }
+    return value
+  }
+})
+
+/** Asks for every statement to be checked again, whatever was said before. */
+const recheckStatements = StateEffect.define<null>()
+
+/** Long enough that a typing burst is one check, not one per keystroke. */
+const CHECK_DELAY_MS = 500
+/** Statements sent per round trip; the rest go in the next pass. */
+const MAX_CHECK_BATCH = 25
+
+/**
+ * Sends statements nobody has checked yet to the server, after a pause in
+ * typing, and files the verdicts in `serverChecks`. One request at a time: a
+ * slow server gets a queue of one, never a pile-up.
+ */
+function serverChecker(sourceRef: React.MutableRefObject<CheckStatements | null>) {
+  return ViewPlugin.fromClass(
+    class {
+      timer: number | null = null
+      inFlight = false
+      /** Something changed mid-request, so another pass is owed when it lands. */
+      owed = false
+      /** Earlier verdicts may be stale; check everything rather than only the new. */
+      stale = false
+      destroyed = false
+
+      constructor(readonly view: EditorView) {
+        this.schedule()
+      }
+
+      update(update: ViewUpdate): void {
+        const recheck = update.transactions.some((tr) =>
+          tr.effects.some((effect) => effect.is(recheckStatements))
+        )
+        if (recheck) this.stale = true
+        if (recheck || update.docChanged) this.schedule()
+      }
+
+      schedule(): void {
+        if (this.timer !== null) window.clearTimeout(this.timer)
+        this.timer = window.setTimeout(() => {
+          this.timer = null
+          void this.run()
+        }, CHECK_DELAY_MS)
+      }
+
+      async run(): Promise<void> {
+        const check = sourceRef.current
+        if (!check || this.destroyed) return
+        if (this.inFlight) {
+          this.owed = true
+          return
+        }
+
+        const { state } = this.view
+        const known = state.field(serverChecks)
+        const stale = this.stale
+        const current = attempt(
+          () => checkableStatements(state.doc.toString(), state.facet(sqlEngine)).map((s) => s.text),
+          [] as string[]
+        )
+        const pending = [...new Set(current.filter((text) => stale || !known.has(text)))].slice(
+          0,
+          MAX_CHECK_BATCH
+        )
+        if (pending.length === 0) return
+
+        this.inFlight = true
+        this.stale = false
+        let landed = false
+        try {
+          const verdicts = await check(pending)
+          // The checker changed while this was out — reconnected, or a run
+          // moved things — and its recheck will ask again.
+          if (this.destroyed || sourceRef.current !== check) return
+          const fresh = new Map(pending.map((text, i) => [text, verdicts[i]]))
+
+          // Keep only what still applies, so the map can't grow without bound.
+          const next = new Map<string, StatementCheck>()
+          const latest = this.view.state.field(serverChecks)
+          for (const text of checkableStatements(
+            this.view.state.doc.toString(),
+            this.view.state.facet(sqlEngine)
+          ).map((s) => s.text)) {
+            const verdict = fresh.get(text) ?? (stale ? undefined : latest.get(text))
+            if (verdict) next.set(text, verdict)
+          }
+          this.view.dispatch({ effects: setServerChecks.of(next) })
+          landed = true
+        } catch (error) {
+          // No verdict, so the local rules stand. Not retried until something
+          // changes, so a broken connection isn't hammered.
+          console.warn('Statement check failed', error)
+        } finally {
+          this.inFlight = false
+          // Another pass picks up whatever this one capped off or missed.
+          if (!this.destroyed && (landed || this.owed)) {
+            this.owed = false
+            this.schedule()
+          }
+        }
+      }
+
+      destroy(): void {
+        this.destroyed = true
+        if (this.timer !== null) window.clearTimeout(this.timer)
+      }
+    }
+  )
+}
+
+/**
  * Turns the server's verdict into a diagnostic.
  *
  * The statement is located by its text rather than by a stored offset, which
@@ -329,23 +468,35 @@ const sqlLinter = linter(
   (view) => {
     const { state } = view
     const found = attempt(
-      () => lintSql(state.doc.toString(), state.facet(sqlEngine), state.selection.main.head),
+      () =>
+        lintSql(
+          state.doc.toString(),
+          state.facet(sqlEngine),
+          state.selection.main.head,
+          state.field(serverChecks)
+        ),
       [] as readonly SqlDiagnostic[]
     )
     const limit = state.doc.length
-    const diagnostics: Diagnostic[] = found.map((d) => ({
-      from: Math.min(d.from, limit),
-      to: Math.min(d.to, limit),
-      severity: 'error' as const,
-      source: 'sql',
-      message: d.message,
-      // Our own squiggle, drawn with `text-decoration` rather than lint's
-      // background image so it survives line wrapping.
-      markClass: 'cm-sql-error'
-    }))
+    const diagnostics: Diagnostic[] = found.map((d) => {
+      const severity = d.severity ?? 'error'
+      return {
+        from: Math.min(d.from, limit),
+        to: Math.min(d.to, limit),
+        severity,
+        source: 'sql',
+        message: d.message,
+        // Our own squiggle, drawn with `text-decoration` rather than lint's
+        // background image so it survives line wrapping.
+        markClass: severity === 'warning' ? 'cm-sql-warning' : 'cm-sql-error'
+      }
+    })
 
+    // The live check has usually said the same thing at the same spot already.
     const fromServer = attempt(() => serverDiagnostic(state), null)
-    if (fromServer) diagnostics.push(fromServer)
+    if (fromServer && !diagnostics.some((d) => d.from === fromServer.from)) {
+      diagnostics.push(fromServer)
+    }
 
     return diagnostics.sort((a, b) => a.from - b.from || a.to - b.to)
   },
@@ -356,6 +507,7 @@ const sqlLinter = linter(
     // within one does not. A new server verdict always needs one.
     needsRefresh: (update) => {
       if (update.startState.field(queryFailure) !== update.state.field(queryFailure)) return true
+      if (update.startState.field(serverChecks) !== update.state.field(serverChecks)) return true
       const before = update.startState.field(caretStatement)
       const after = update.state.field(caretStatement)
       return before?.start !== after?.start || before?.end !== after?.end
@@ -402,18 +554,23 @@ const currentStatementHighlight = ViewPlugin.fromClass(
 )
 
 class ErrorMarker extends GutterMarker {
-  constructor(readonly message: string) {
+  constructor(
+    readonly message: string,
+    readonly warning: boolean
+  ) {
     super()
   }
 
   eq(other: GutterMarker): boolean {
-    return other instanceof ErrorMarker && other.message === this.message
+    return (
+      other instanceof ErrorMarker && other.message === this.message && other.warning === this.warning
+    )
   }
 
   toDOM(): Node {
     const box = document.createElement('span')
-    box.className = 'cm-lint-error'
-    box.textContent = '×'
+    box.className = this.warning ? 'cm-lint-warning' : 'cm-lint-error'
+    box.textContent = this.warning ? '!' : '×'
     box.title = this.message
     return box
   }
@@ -437,7 +594,7 @@ const caretStatementMarker = new CaretStatementMarker()
 
 /**
  * The strip between the line numbers and the text: a red cross on any line
- * carrying a problem, otherwise a dot beside the statement being edited — left
+ * carrying a problem (an amber `!` if it's only a warning), otherwise a dot beside the statement being edited — left
  * off while there's a selection, like the shading. The cross wins, so a broken
  * current statement reads as broken.
  */
@@ -447,18 +604,24 @@ const statusGutter = gutter({
     const { state } = view
     const doc = state.doc
 
-    // Several problems can land on one line; the marker's tooltip lists them all.
-    const byLine = new Map<number, string[]>()
+    // Several problems can land on one line; the marker's tooltip lists them
+    // all, and it's only a warning if every one of them is.
+    const byLine = new Map<number, { messages: string[]; warning: boolean }>()
     forEachDiagnostic(state, (diagnostic, from) => {
       const line = doc.lineAt(Math.min(from, doc.length))
-      const messages = byLine.get(line.from)
-      if (messages) messages.push(diagnostic.message)
-      else byLine.set(line.from, [diagnostic.message])
+      const warning = diagnostic.severity === 'warning'
+      const entry = byLine.get(line.from)
+      if (entry) {
+        entry.messages.push(diagnostic.message)
+        entry.warning &&= warning
+      } else {
+        byLine.set(line.from, { messages: [diagnostic.message], warning })
+      }
     })
 
     const markers: Range<GutterMarker>[] = []
-    for (const [at, messages] of byLine) {
-      markers.push(new ErrorMarker(messages.join('\n')).range(at))
+    for (const [at, { messages, warning }] of byLine) {
+      markers.push(new ErrorMarker(messages.join('\n'), warning).range(at))
     }
 
     const statement = state.field(caretStatement)
@@ -486,7 +649,8 @@ export function QueryEditor({
   readOnly = false,
   background,
   engine,
-  failure
+  failure,
+  checkStatements = null
 }: Props): JSX.Element {
   const sqlDialect = engine === 'postgres' ? PostgreSQL : MySQL
   const hostRef = useRef<HTMLDivElement>(null)
@@ -506,6 +670,10 @@ export function QueryEditor({
     onNeedSchemaColumns
   })
   completionData.current = { schema: completionSchema, defaultSchema, onNeedSchemaColumns }
+
+  // Read through a ref for the same reason; the effect below reacts to changes.
+  const checkRef = useRef<CheckStatements | null>(checkStatements)
+  checkRef.current = checkStatements
 
   const languageExtension = useMemo(
     () =>
@@ -539,6 +707,8 @@ export function QueryEditor({
           lineNumbers(),
           caretStatement,
           queryFailure,
+          serverChecks,
+          serverChecker(checkRef),
           sqlLinter,
           // After `lineNumbers` so the markers sit between the numbers and the
           // text, the way Workbench arranges them.
@@ -645,6 +815,17 @@ export function QueryEditor({
     if (!view) return
     view.dispatch({ effects: langCompartment.current.reconfigure(languageExtension) })
   }, [languageExtension])
+
+  // A new checker means the old verdicts may be stale: the schema moved, or a
+  // run created or dropped something. Without one, they can't be refreshed, so
+  // the local rules take over again.
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: checkStatements ? recheckStatements.of(null) : setServerChecks.of(new Map())
+    })
+  }, [checkStatements])
 
   // Push the server's verdict on the last run into editor state, where the
   // linter folds it in with the local rules.
