@@ -352,15 +352,17 @@ function normaliseCell(raw: string): CellValue {
 // Export
 // ---------------------------------------------------------------------------
 
+/** One CSV field: NULL is empty, and anything holding a quote, comma or newline is quoted. */
+export function csvField(value: CellValue): string {
+  if (value === null) return ''
+  const text = String(value)
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+}
+
 export function toCsv(result: ResultSet, state: GridState, refs: RowRef[]): string {
-  const escape = (value: CellValue): string => {
-    if (value === null) return ''
-    const text = String(value)
-    return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
-  }
-  const header = result.columns.map((c) => escape(c.name)).join(',')
+  const header = result.columns.map((c) => csvField(c.name)).join(',')
   const body = refs
-    .map((ref) => result.columns.map((_, i) => escape(cellValue(result, state, ref, i))).join(','))
+    .map((ref) => result.columns.map((_, i) => csvField(cellValue(result, state, ref, i))).join(','))
     .join('\r\n')
   return `${header}\r\n${body}\r\n`
 }

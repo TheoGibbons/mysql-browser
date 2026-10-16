@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { HistoryColumnWidths, HistoryEntry } from '@shared/types'
 import { useContextMenu } from './ui/ContextMenu'
+import { csvField } from '../lib/grid'
 
 /** Status icon gutter — not resizable, it only ever holds a ✓ or a !. */
 const GUTTER_WIDTH = 26
@@ -69,6 +70,22 @@ interface Props {
   /** Fired once when a drag ends, so the new widths are persisted just once. */
   onResizeCommit(): void
   onUseSql(sql: string): void
+}
+
+/** The row as a header line plus one data line, with the time absolute rather than `2 mins ago`. */
+function rowAsCsv(entry: HistoryEntry, duration: string): string {
+  const lines = [
+    ['Status', '#', 'Time', 'Action', 'Message', 'Duration / Fetch'],
+    [
+      entry.status,
+      entry.seq,
+      new Date(entry.startedAt).toLocaleString(),
+      entry.action,
+      entry.message,
+      duration
+    ]
+  ]
+  return lines.map((line) => line.map(csvField).join(',')).join('\r\n') + '\r\n'
 }
 
 export function HistoryView({
@@ -210,6 +227,10 @@ export function HistoryView({
                     {
                       label: 'Copy message',
                       onSelect: () => void window.api.clipboard.write(entry.message)
+                    },
+                    {
+                      label: 'Copy row as CSV',
+                      onSelect: () => void window.api.clipboard.write(rowAsCsv(entry, duration))
                     },
                     { separator: true },
                     {
