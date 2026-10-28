@@ -120,13 +120,17 @@ done
 # containers describe differently and serves 404 while both exist, so draining
 # would stretch that into a 20-second outage. Stop the old one immediately
 # instead and accept a sub-second blip.
+#
+# `compose config` prints a literal $ escaped as $$, while the container holds
+# the label Traefik reads. Unescape it before comparing, or the apex redirect's
+# ${1} always looks changed and no deploy ever drains.
 routing_labels() { { grep -o '"traefik\.[^"]*": *"[^"]*"' || true; } | sed 's/": *"/":"/' | sort; }
 for service in "${rolled[@]}"; do
   rollout=(docker rollout "${compose_args[@]}" --timeout 90)
   running_ids="$("${compose[@]}" ps --quiet "$service")"
   if [[ -n "$running_ids" ]]; then
     live_labels="$(docker inspect --format '{{json .Config.Labels}}' "${running_ids%%$'\n'*}" | routing_labels)"
-    new_labels="$("${compose[@]}" config --format json "$service" | routing_labels)"
+    new_labels="$("${compose[@]}" config --format json "$service" | sed 's/\$\$/$/g' | routing_labels)"
     if [[ "$live_labels" == "$new_labels" ]]; then
       rollout+=(--pre-stop-hook 'touch /tmp/drain && sleep 20')
     else
