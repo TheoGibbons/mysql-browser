@@ -8,7 +8,7 @@
 
 import type { CellValue, ColumnMeta, ResultSet } from '@shared/types'
 import { buildInsert, buildInsertSet, whereClause } from '@shared/sql'
-import { escapeValue, qualify, type Dialect } from '@shared/dialect'
+import { cellText, escapeValue, qualify, type Dialect } from '@shared/dialect'
 
 /** `>= 0` indexes a base row; `< 0` indexes an added row as `-1 - n`. */
 export type RowRef = number
@@ -391,6 +391,56 @@ export function toTsv(result: ResultSet, state: GridState, refs: RowRef[]): stri
     )
     .join('\r\n')
   return `${header}\r\n${body}\r\n`
+}
+
+/**
+ * Rows as an aligned, pipe-delimited table, which is also a Markdown table.
+ * Each row stays on one line: line breaks, tabs and pipes inside values are
+ * escaped. Numbers sit right-aligned. Values longer than `maxCellChars` are
+ * cut short with `…`.
+ */
+export function textTable(
+  columns: ColumnMeta[],
+  rows: CellValue[][],
+  maxCellChars = Infinity
+): string[] {
+  const cell = (value: CellValue | undefined): string => {
+    const text = cellText(value)
+      .replace(/\r/g, '\\r')
+      .replace(/\n/g, '\\n')
+      .replace(/\t/g, '\\t')
+      .replace(/\|/g, '\\|')
+    return text.length > maxCellChars ? `${text.slice(0, maxCellChars - 1)}…` : text
+  }
+
+  const header = columns.map((c) => cell(c.name))
+  const body = rows.map((row) => columns.map((_, i) => cell(row[i])))
+  // A loop rather than `Math.max(...)`: a full result set is far more rows
+  // than a spread can pass as arguments.
+  const widths = header.map((name) => Math.max(3, name.length))
+  for (const values of body) {
+    values.forEach((v, i) => {
+      if (v.length > widths[i]) widths[i] = v.length
+    })
+  }
+
+  const line = (values: string[], alignNumbers: boolean): string =>
+    `| ${values
+      .map((v, i) =>
+        alignNumbers && columns[i].isNumeric ? v.padStart(widths[i]) : v.padEnd(widths[i])
+      )
+      .join(' | ')} |`
+
+  return [
+    line(header, false),
+    `|${widths.map((w) => '-'.repeat(w + 2)).join('|')}|`,
+    ...body.map((values) => line(values, true))
+  ]
+}
+
+export function toTextTable(result: ResultSet, state: GridState, refs: RowRef[]): string {
+  const rows = refs.map((ref) => result.columns.map((_, i) => cellValue(result, state, ref, i)))
+  return `${textTable(result.columns, rows).join('\r\n')}\r\n`
 }
 
 export function toSqlInserts(

@@ -9,7 +9,6 @@
  * `*\/` would end a block comment early and turn the rest into SQL.
  */
 
-import { cellText } from '@shared/dialect'
 import {
   splitStatements,
   statementEffect,
@@ -17,6 +16,7 @@ import {
   type Statement
 } from '@shared/sql'
 import type { DbEngine, ResultSet } from '@shared/types'
+import { textTable } from './grid'
 
 /** Rows written under each statement; the rest are only counted. */
 export const ANNOTATE_ROW_LIMIT = 50
@@ -113,16 +113,6 @@ function duration(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`
 }
 
-/** One line, no pipes, bounded length: whatever the value holds. */
-function cell(value: ResultSet['rows'][number][number]): string {
-  const text = cellText(value)
-    .replace(/\r/g, '\\r')
-    .replace(/\n/g, '\\n')
-    .replace(/\t/g, '\\t')
-    .replace(/\|/g, '\\|')
-  return text.length > MAX_CELL_CHARS ? `${text.slice(0, MAX_CELL_CHARS - 1)}…` : text
-}
-
 /** The block written under a statement that ran. */
 export function formatResult(result: ResultSet): string[] {
   const took = duration(result.durationMs + result.fetchMs)
@@ -130,24 +120,9 @@ export function formatResult(result: ResultSet): string[] {
 
   const total = result.totalRows ?? result.rows.length
   const shown = result.rows.slice(0, ANNOTATE_ROW_LIMIT)
-  const header = result.columns.map((c) => cell(c.name))
-  const body = shown.map((row) => result.columns.map((_, i) => cell(row[i])))
-  const widths = header.map((name, i) =>
-    Math.max(3, name.length, ...body.map((values) => values[i].length))
-  )
-
-  const line = (values: string[], numeric: boolean): string =>
-    `-- | ${values
-      .map((v, i) =>
-        numeric && result.columns[i].isNumeric ? v.padStart(widths[i]) : v.padEnd(widths[i])
-      )
-      .join(' | ')} |`
-
   const lines = [
     `${HEADER}${plural(total, 'row')} · ${took}`,
-    line(header, false),
-    `-- |${widths.map((w) => '-'.repeat(w + 2)).join('|')}|`,
-    ...body.map((values) => line(values, true))
+    ...textTable(result.columns, shown, MAX_CELL_CHARS).map((line) => `-- ${line}`)
   ]
   if (total > shown.length) {
     lines.push(`-- … ${plural(total - shown.length, 'more row')} not shown`)

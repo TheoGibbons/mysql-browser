@@ -11,6 +11,7 @@ import {
   toCsv,
   toJson,
   toSqlInserts,
+  toTextTable,
   toTsv,
   visibleRefs,
   type GridState
@@ -380,6 +381,10 @@ export function ConnectionView({ conn }: Props): JSX.Element {
       {
         label: 'Copy to Clipboard: CSV',
         onSelect: () => void window.api.clipboard.write(toCsv(result, grid, refs))
+      },
+      {
+        label: 'Copy to Clipboard: Markdown table',
+        onSelect: () => void window.api.clipboard.write(toTextTable(result, grid, refs))
       }
     ])
   }
