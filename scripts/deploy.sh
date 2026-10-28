@@ -23,6 +23,7 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   exit 1
 fi
 
+pulled_from="$(git rev-parse HEAD)"
 git pull --ff-only
 
 # What we just pulled has to survive a Windows checkout. A CR in a shell script
@@ -45,6 +46,15 @@ if [[ -n "$not_exec" ]]; then
   echo "$not_exec" >&2
   echo "Fix with: git update-index --chmod=+x <file>" >&2
   exit 1
+fi
+
+# Bash keeps running the copy of this script it started with, not the one just
+# pulled, so a change to deploy.sh would otherwise take effect one deploy late.
+# Start over on the new copy once the checks above have passed it; its own
+# pull then finds nothing new.
+if ! git diff --quiet "$pulled_from" HEAD -- scripts/deploy.sh; then
+  echo "scripts/deploy.sh changed; restarting on the new copy."
+  exec bash "$repo_dir/scripts/deploy.sh" "$@"
 fi
 
 if [[ ! -f .env ]]; then
