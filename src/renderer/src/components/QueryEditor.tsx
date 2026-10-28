@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import {
+  Annotation,
   Compartment,
   EditorState,
   Facet,
@@ -92,6 +93,10 @@ interface Props {
   defaultSchema: string | null
   /** Asked to fetch columns for a schema the statement mentions but that isn't cached. */
   onNeedSchemaColumns?(schema: string): void
+  /**
+   * Locks the editor. While locked it follows `initialSql` instead, so text a
+   * run writes into the tab — Run and annotate's results — shows as it lands.
+   */
   readOnly?: boolean
   /** Background tint for the editor, from the connection's colour. */
   background?: string
@@ -636,6 +641,32 @@ const statusGutter = gutter({
 
 const DEBOUNCE_MS = 300
 
+/** Marks a change that came from the tab's text rather than from typing. */
+const fromTab = Annotation.define<boolean>()
+
+/**
+ * Brings the document in line with `next` as one change spanning only what
+ * differs, so the caret and scroll position stay put around it.
+ */
+function followText(view: EditorView, next: string): void {
+  const current = view.state.doc.toString()
+  if (current === next) return
+  const shorter = Math.min(current.length, next.length)
+  let head = 0
+  while (head < shorter && current[head] === next[head]) head++
+  let tail = 0
+  while (
+    tail < shorter - head &&
+    current[current.length - 1 - tail] === next[next.length - 1 - tail]
+  ) {
+    tail++
+  }
+  view.dispatch({
+    changes: { from: head, to: current.length - tail, insert: next.slice(head, next.length - tail) },
+    annotations: fromTab.of(true)
+  })
+}
+
 export function QueryEditor({
   tabId,
   initialSql,
@@ -657,6 +688,8 @@ export function QueryEditor({
   const viewRef = useRef<EditorView | null>(null)
   const debounceRef = useRef<number | null>(null)
   const langCompartment = useRef(new Compartment())
+  const lockCompartment = useRef(new Compartment())
+  const wasLocked = useRef(readOnly)
 
   // Handlers are read through a ref so re-created callbacks never rebuild the view.
   const handlers = useRef({ onChange, onExecuteCurrent, onExecuteAll })
@@ -728,7 +761,7 @@ export function QueryEditor({
           syntaxHighlighting(highlightStyle),
           currentStatementHighlight,
           langCompartment.current.of(languageExtension),
-          EditorState.readOnly.of(readOnly),
+          lockCompartment.current.of(EditorState.readOnly.of(readOnly)),
           EditorView.lineWrapping,
           keymap.of([
             {
@@ -762,6 +795,8 @@ export function QueryEditor({
           ]),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) return
+            // The tab already holds this text; it's where the change came from.
+            if (update.transactions.every((tr) => tr.annotation(fromTab))) return
             if (debounceRef.current !== null) window.clearTimeout(debounceRef.current)
             debounceRef.current = window.setTimeout(() => {
               debounceRef.current = null
@@ -816,6 +851,27 @@ export function QueryEditor({
     view.dispatch({ effects: langCompartment.current.reconfigure(languageExtension) })
   }, [languageExtension])
 
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: lockCompartment.current.reconfigure(EditorState.readOnly.of(readOnly)) })
+  }, [readOnly])
+
+  // While locked, the tab's text is the source of truth. Followed one last time
+  // on the render that unlocks, since a run's final write can land with it.
+  useEffect(() => {
+    const view = viewRef.current
+    const following = readOnly || wasLocked.current
+    wasLocked.current = readOnly
+    if (!view || !following) return
+    // Anything still waiting to be reported predates the text being followed.
+    if (debounceRef.current !== null) {
+      window.clearTimeout(debounceRef.current)
+      debounceRef.current = null
+    }
+    followText(view, initialSql)
+  }, [readOnly, initialSql])
+
   // A new checker means the old verdicts may be stale: the schema moved, or a
   // run created or dropped something. Without one, they can't be refreshed, so
   // the local rules take over again.
@@ -838,6 +894,10 @@ export function QueryEditor({
   // The CodeMirror content is transparent (see styles.css), so tinting the host
   // shows through the editor without touching syntax colours.
   return (
-    <div className="editor-host" ref={hostRef} style={background ? { background } : undefined} />
+    <div
+      className={readOnly ? 'editor-host locked' : 'editor-host'}
+      ref={hostRef}
+      style={background ? { background } : undefined}
+    />
   )
 }

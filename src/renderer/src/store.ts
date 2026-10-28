@@ -8,6 +8,7 @@ import {
   type HistoryEntry,
   type Preferences,
   type QueryTabState,
+  type ResultSet,
   type SchemaInfo,
   type SessionLayout,
   type SessionStatus,
@@ -19,6 +20,16 @@ import { guessTableName, splitStatements } from '@shared/sql'
 import { defaultTransferState } from '@shared/transfer'
 import { newId } from './lib/ids'
 import { emptyGridState, type GridState } from './lib/grid'
+import {
+  ANNOTATE_ROW_LIMIT,
+  annotatableStatements,
+  annotateBlocker,
+  formatError,
+  formatResult,
+  formatStopped,
+  insertionPoint,
+  stripAnnotations
+} from './lib/annotate'
 
 /** One open connection tab. Several may point at the same saved connection. */
 export interface ConnTab {
@@ -50,6 +61,8 @@ export interface ConnTab {
   tabs: QueryTabState[]
   activeTabId: string | null
   running: Record<string, boolean>
+  /** Tabs part-way through Run and annotate: their editors are locked meanwhile. */
+  annotating: Record<string, { done: number; total: number }>
 
   history: HistoryEntry[]
   historySeq: number
@@ -99,6 +112,11 @@ interface AppState {
   updateTab(sessionId: string, tabId: string, patch: Partial<QueryTabState>): void
 
   runQuery(sessionId: string, tabId: string, sql: string, options?: RunOptions): Promise<void>
+  /**
+   * Runs each statement of a read-only script in turn and writes its result
+   * underneath it, in the tab's own text. See `lib/annotate`.
+   */
+  annotateScript(sessionId: string, tabId: string, sql: string): Promise<void>
   cancelQuery(sessionId: string, tabId: string): Promise<void>
 
   pushHistory(sessionId: string, entry: Omit<HistoryEntry, 'id' | 'seq'>): string
@@ -145,6 +163,13 @@ function makeTab(options: NewTabOptions, index: number): QueryTabState {
   }
 }
 
+/**
+ * `sessionId:tabId` keys whose Run and annotate was asked to stop. Cancelling
+ * only kills the statement on the server, so the loop checks here before
+ * starting the next one.
+ */
+const annotateStops = new Set<string>()
+
 /** `sessionId schema` keys whose column fetch is already in flight. */
 const columnsInflight = new Set<string>()
 
@@ -166,6 +191,25 @@ export const useAppStore = create<AppState>((set, get) => {
 
   const conn = (sessionId: string): ConnTab | undefined =>
     get().connTabs.find((t) => t.sessionId === sessionId)
+
+  /**
+   * The session can be left disconnected by a dropped socket the worker could
+   * not repair on its own. Reopen it before a run rather than making the user
+   * hunt for the Reconnect button, and log `action` as failed if that fails.
+   */
+  const ensureConnected = async (sessionId: string, action: string): Promise<boolean> => {
+    if (conn(sessionId)?.status === 'connected') return true
+    if (await get().reconnect(sessionId)) return true
+    get().pushHistory(sessionId, {
+      status: 'error',
+      startedAt: Date.now(),
+      action,
+      message: 'Not connected. Use Reconnect to open the connection.',
+      durationMs: null,
+      fetchMs: null
+    })
+    return false
+  }
 
   return {
     connections: [],
@@ -248,6 +292,7 @@ export const useAppStore = create<AppState>((set, get) => {
         tabs: [],
         activeTabId: null,
         running: {},
+        annotating: {},
         history: [],
         historySeq: 0,
         layout: { ...DEFAULT_LAYOUT }
@@ -516,8 +561,12 @@ export const useAppStore = create<AppState>((set, get) => {
           activeTabId = next?.id ?? null
         }
         const running = { ...t.running }
-        for (const id of remove) delete running[id]
-        return { ...t, tabs, activeTabId, running }
+        const annotating = { ...t.annotating }
+        for (const id of remove) {
+          delete running[id]
+          delete annotating[id]
+        }
+        return { ...t, tabs, activeTabId, running, annotating }
       })
 
       if (tab.isPrimary) {
@@ -561,24 +610,7 @@ export const useAppStore = create<AppState>((set, get) => {
       if (!trimmed) return
 
       if (tab.running[tabId]) return
-
-      if (tab.status !== 'connected') {
-        // The session can be left disconnected by a dropped socket the worker
-        // could not repair on its own. Reopen it here rather than making the
-        // user hunt for the Reconnect button before every query.
-        const recovered = await get().reconnect(sessionId)
-        if (!recovered) {
-          get().pushHistory(sessionId, {
-            status: 'error',
-            startedAt: Date.now(),
-            action: trimmed,
-            message: 'Not connected. Use Reconnect to open the connection.',
-            durationMs: null,
-            fetchMs: null
-          })
-          return
-        }
-      }
+      if (!(await ensureConnected(sessionId, trimmed))) return
 
       const statements = splitStatements(trimmed, tab.config.engine)
       const toRun = options.explain
@@ -660,7 +692,123 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
+    async annotateScript(sessionId, tabId, sql) {
+      const tab = conn(sessionId)
+      if (!tab || tab.running[tabId] || tab.annotating[tabId]) return
+      const engine = tab.config.engine
+
+      // Positions are worked out on the text without old results, and only
+      // move as this run writes new ones: the editor is locked meanwhile.
+      const base = stripAnnotations(sql)
+      const statements = annotatableStatements(base, engine)
+      if (statements.length === 0) return
+      const blocker = annotateBlocker(statements, engine)
+      if (blocker) {
+        // The button is disabled for this already; the editor's text can run
+        // a moment ahead of the copy the button judged.
+        get().pushHistory(sessionId, {
+          status: 'error',
+          startedAt: Date.now(),
+          action: 'Run and annotate',
+          message: `Statement ${blocker.statement} of ${blocker.statements} starts with “${blocker.opening}”; only read-only scripts can be annotated.`,
+          durationMs: null,
+          fetchMs: null
+        })
+        return
+      }
+
+      const key = `${sessionId}:${tabId}`
+      const points = statements.map((statement) => insertionPoint(base, statement, engine))
+      const total = statements.length
+      annotateStops.delete(key)
+      // Locked before anything is awaited, and handed the text the run started
+      // from: a locked editor follows the tab's text, so it must be this.
+      patchConn(sessionId, (t) => ({
+        ...t,
+        running: { ...t.running, [tabId]: true },
+        annotating: { ...t.annotating, [tabId]: { done: 0, total } }
+      }))
+      get().updateTab(sessionId, tabId, { sql })
+
+      let text = base
+      let shift = 0
+      let shown: { result: ResultSet; statement: string } | null = null
+      try {
+        if (!(await ensureConnected(sessionId, 'Run and annotate'))) return
+        get().updateTab(sessionId, tabId, { sql: base, failure: null })
+
+        for (let i = 0; i < total; i++) {
+          if (annotateStops.has(key)) break
+          if (!conn(sessionId)?.tabs.some((t) => t.id === tabId)) break
+
+          const statement = statements[i].text
+          const started = Date.now()
+          const historyId = get().pushHistory(sessionId, {
+            status: 'running',
+            startedAt: started,
+            action: statement,
+            message: 'Running…',
+            durationMs: null,
+            fetchMs: null
+          })
+
+          let block: string[]
+          try {
+            const outcome = await window.api.session.query(
+              sessionId,
+              tabId,
+              statement,
+              ANNOTATE_ROW_LIMIT
+            )
+            const result = outcome.results[0]
+            block = formatResult(result)
+            if (result.columns.length > 0) shown = { result, statement }
+            get().updateHistory(sessionId, historyId, {
+              status: 'ok',
+              message: result.message,
+              durationMs: result.durationMs,
+              fetchMs: result.fetchMs
+            })
+          } catch (err) {
+            const message = (err as Error).message
+            block = annotateStops.has(key) ? formatStopped() : formatError(message)
+            get().updateHistory(sessionId, historyId, {
+              status: 'error',
+              message,
+              durationMs: Date.now() - started,
+              fetchMs: 0
+            })
+          }
+
+          const { at, before, after } = points[i]
+          const insert = before + block.join('\n') + after
+          text = text.slice(0, at + shift) + insert + text.slice(at + shift)
+          shift += insert.length
+          get().updateTab(sessionId, tabId, { sql: text })
+          patchConn(sessionId, (t) => ({
+            ...t,
+            annotating: { ...t.annotating, [tabId]: { done: i + 1, total } }
+          }))
+        }
+
+        get().updateTab(sessionId, tabId, {
+          result: shown?.result ?? null,
+          resultStatement: shown?.statement ?? ''
+        })
+      } finally {
+        annotateStops.delete(key)
+        patchConn(sessionId, (t) => {
+          const running = { ...t.running }
+          const annotating = { ...t.annotating }
+          delete running[tabId]
+          delete annotating[tabId]
+          return { ...t, running, annotating }
+        })
+      }
+    },
+
     async cancelQuery(sessionId, tabId) {
+      if (conn(sessionId)?.annotating[tabId]) annotateStops.add(`${sessionId}:${tabId}`)
       try {
         await window.api.session.cancel(sessionId, tabId)
       } catch (err) {

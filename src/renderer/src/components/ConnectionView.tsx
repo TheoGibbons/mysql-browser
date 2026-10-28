@@ -16,6 +16,7 @@ import {
   type GridState
 } from '../lib/grid'
 import { isValidHex, tint } from '../lib/color'
+import { annotatableStatements, annotateBlocker, stripAnnotations } from '../lib/annotate'
 import { dirNameOf, joinPath } from '@shared/transfer'
 import { SchemaTree } from './SchemaTree'
 import { QueryTabsBar } from './QueryTabsBar'
@@ -34,6 +35,7 @@ import {
   BoltCursorIcon,
   BoltExplainIcon,
   BoltIcon,
+  BoltNotesIcon,
   BroomIcon,
   ExportIcon,
   ImportIcon,
@@ -77,6 +79,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
   const setActiveTab = useAppStore((s) => s.setActiveTab)
   const updateTab = useAppStore((s) => s.updateTab)
   const runQuery = useAppStore((s) => s.runQuery)
+  const annotateScript = useAppStore((s) => s.annotateScript)
   const cancelQuery = useAppStore((s) => s.cancelQuery)
   const reconnect = useAppStore((s) => s.reconnect)
   const setLayout = useAppStore((s) => s.setLayout)
@@ -174,8 +177,12 @@ export function ConnectionView({ conn }: Props): JSX.Element {
       // 'all' is the whole script, selection or not. The others run the
       // selection, falling back to the statement at the caret — so a lost
       // selection costs one statement, never the whole script.
-      const sql =
+      const picked =
         mode === 'all' ? api.getSql() : (api.getSelection() ?? api.getStatementAtCursor())
+      // Results Run and annotate wrote are only comments, but a statement
+      // carries the block above it as its own leading text, and History would
+      // show a result table in place of the query.
+      const sql = picked && stripAnnotations(picked)
       if (!sql || !sql.trim()) return
 
       // EXPLAIN never modifies; otherwise, gate modifying SQL behind the loud
@@ -191,6 +198,28 @@ export function ConnectionView({ conn }: Props): JSX.Element {
     },
     [activeTab, conn.config.confirmModifying, runResolved, engine]
   )
+
+  const annotate = useCallback(() => {
+    if (!activeTab || activeTab.kind !== 'query') return
+    const api = editorApi.current
+    if (!api) return
+    resetGrid(gridKey(sessionId, activeTab.id), { clearSort: true })
+    void annotateScript(sessionId, activeTab.id, api.getSql())
+  }, [activeTab, annotateScript, resetGrid, sessionId])
+
+  // Why Run and annotate is unavailable for the script as it stands, or null
+  // when it can run. Judged on the tab's saved text, which trails typing by a
+  // moment; the store checks the editor's own text again before running.
+  const annotateBlockedReason = useMemo(() => {
+    if (activeTab?.kind !== 'query') return null
+    const statements = annotatableStatements(stripAnnotations(activeTab.sql), engine)
+    if (statements.length === 0) return 'Nothing to run'
+    const blocker = annotateBlocker(statements, engine)
+    if (!blocker) return null
+    const which =
+      blocker.statements > 1 ? `Statement ${blocker.statement} of ${blocker.statements}` : 'The statement'
+    return `${which} starts with “${blocker.opening}”: Run and annotate only runs read-only scripts`
+  }, [activeTab?.kind, activeTab?.sql, engine])
 
   const prettify = useCallback(() => {
     const api = editorApi.current
@@ -440,6 +469,8 @@ export function ConnectionView({ conn }: Props): JSX.Element {
               conn={conn}
               tab={activeTab}
               isRunning={isRunning}
+              annotating={conn.annotating[activeTab.id] ?? null}
+              annotateBlockedReason={annotateBlockedReason}
               showResults={showResults}
               canEdit={canEdit}
               dirty={dirty}
@@ -449,6 +480,7 @@ export function ConnectionView({ conn }: Props): JSX.Element {
               onSqlChange={(sql) => updateTab(sessionId, activeTab.id, { sql })}
               onDesignerChange={(designer) => updateTab(sessionId, activeTab.id, { designer })}
               onExecute={execute}
+              onAnnotate={annotate}
               onPrettify={prettify}
               onCancel={() => void cancelQuery(sessionId, activeTab.id)}
               onExport={exportResults}
@@ -527,6 +559,9 @@ interface TabContentProps {
   conn: ConnTab
   tab: QueryTabState
   isRunning: boolean
+  /** Progress of a Run and annotate on this tab, whose editor is locked meanwhile. */
+  annotating: { done: number; total: number } | null
+  annotateBlockedReason: string | null
   showResults: boolean
   canEdit: boolean
   dirty: boolean
@@ -536,6 +571,7 @@ interface TabContentProps {
   onSqlChange(sql: string): void
   onDesignerChange(designer: DesignerState): void
   onExecute(mode: 'all' | 'current' | 'explain'): void
+  onAnnotate(): void
   onPrettify(): void
   onCancel(): void
   onExport(event: React.MouseEvent): void
@@ -553,6 +589,8 @@ function TabContent({
   conn,
   tab,
   isRunning,
+  annotating,
+  annotateBlockedReason,
   showResults,
   canEdit,
   dirty,
@@ -562,6 +600,7 @@ function TabContent({
   onSqlChange,
   onDesignerChange,
   onExecute,
+  onAnnotate,
   onPrettify,
   onCancel,
   onExport,
@@ -630,6 +669,17 @@ function TabContent({
             <BoltExplainIcon />
           </button>
           <button
+            className="toolbar-btn"
+            title={
+              annotateBlockedReason ??
+              'Run and annotate: run every statement in turn and write each result underneath it as comments, ready to copy out with the script. Read-only scripts only'
+            }
+            disabled={isRunning || annotateBlockedReason !== null}
+            onClick={onAnnotate}
+          >
+            <BoltNotesIcon />
+          </button>
+          <button
             className="toolbar-btn stop-btn"
             title="Stop the query being executed"
             disabled={!isRunning}
@@ -641,12 +691,19 @@ function TabContent({
           <button
             className="toolbar-btn"
             title="Beautify the statement under the cursor"
+            disabled={annotating !== null}
             onClick={onPrettify}
           >
             <BroomIcon />
           </button>
           <div className="spacer" />
-          {isRunning && <span className="hint">Running… other tabs stay responsive</span>}
+          {isRunning && (
+            <span className="hint">
+              {annotating
+                ? `Running ${Math.min(annotating.done + 1, annotating.total)} of ${annotating.total}… other tabs stay responsive`
+                : 'Running… other tabs stay responsive'}
+            </span>
+          )}
         </div>
 
         <QueryEditor
@@ -665,6 +722,7 @@ function TabContent({
           engine={engine}
           failure={tab.failure ?? null}
           checkStatements={checkStatements}
+          readOnly={annotating !== null}
         />
       </div>
 

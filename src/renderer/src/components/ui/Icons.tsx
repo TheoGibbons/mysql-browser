@@ -155,6 +155,16 @@ export const BoltExplainIcon = ({ size = 14, color = '#d99a1e' }: IconProps): JS
     </>
   )
 
+/** Run every statement and write each result underneath it. */
+export const BoltNotesIcon = ({ size = 14, color = '#d99a1e' }: IconProps): JSX.Element =>
+  svg(
+    size,
+    <>
+      <path d="M6.8 1.2 2 7.6h2.7l-1 4.6 5.4-6.4H6.3l.5-4.6Z" fill={color} stroke="#a8740f" strokeWidth=".7" strokeLinejoin="round" />
+      <path d="M10.4 8.6h4.2M10.4 11.1h4.2M10.4 13.6h2.8" stroke="#333" strokeWidth="1.1" strokeLinecap="round" />
+    </>
+  )
+
 export const StopIcon = ({ size = 14, color = '#c62828' }: IconProps): JSX.Element =>
   svg(
     size,

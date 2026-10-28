@@ -311,6 +311,8 @@ export interface ResultSet {
   /** Column indexes forming the primary key of `editTable`. */
   keyColumns: number[]
   truncated: boolean
+  /** Rows the server returned before `rows` was capped. Absent on older saved results. */
+  totalRows?: number
 }
 
 export interface QueryOutcome {

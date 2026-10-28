@@ -343,7 +343,8 @@ async function runStatement(
     editSchema: target.schema,
     editTable: target.table,
     keyColumns: target.keyColumns,
-    truncated
+    truncated,
+    totalRows: raw.rows.length
   }
 }
 

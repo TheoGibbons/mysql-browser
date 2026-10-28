@@ -544,6 +544,21 @@ textarea {
   line-height: 1.45;
 }
 
+/* Locked while Run and annotate writes into it: still selectable and copyable. */
+.editor-host.locked .cm-content {
+  opacity: 0.7;
+}
+
+.editor-host.locked .cm-editor .cm-scroller,
+.editor-host.locked .cm-editor .cm-content,
+.editor-host.locked .cm-editor .cm-line {
+  cursor: progress;
+}
+
+.editor-host.locked .cm-cursor {
+  display: none;
+}
+
 .cm-editor.cm-focused {
   outline: none;
 }
