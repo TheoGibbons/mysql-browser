@@ -969,6 +969,16 @@ table.grid td.filler {
   margin: 3px 6px;
 }
 
+.context-header {
+  padding: 3px 22px 4px 12px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid var(--border-light);
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: default;
+}
+
 /* --------------------------------------------------------------- modals */
 
 .modal-backdrop {

@@ -369,8 +369,10 @@ export function ConnectionView({ conn }: Props): JSX.Element {
       })
     }
 
+    const rows = `${refs.length.toLocaleString()} ${refs.length === 1 ? 'row' : 'rows'}`
     menu.show(event, [
-      { label: `Export ${refs.length} row(s) as CSV…`, onSelect: () => void save(toCsv(result, grid, refs), 'csv', 'CSV') },
+      { header: grid.selection.length > 0 ? `${rows} selected` : rows },
+      { label: 'Export as CSV…', onSelect: () => void save(toCsv(result, grid, refs), 'csv', 'CSV') },
       { label: 'Export as TSV…', onSelect: () => void save(toTsv(result, grid, refs), 'tsv', 'TSV') },
       { label: 'Export as JSON…', onSelect: () => void save(toJson(result, grid, refs), 'json', 'JSON') },
       {

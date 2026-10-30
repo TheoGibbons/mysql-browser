@@ -13,10 +13,17 @@ export interface MenuSeparator {
   separator: true
 }
 
-export type MenuEntry = MenuItem | MenuSeparator
+/** A caption above the items, for what every one of them acts on. Not clickable. */
+export interface MenuHeader {
+  header: string
+}
+
+export type MenuEntry = MenuItem | MenuSeparator | MenuHeader
 
 const isSeparator = (entry: MenuEntry): entry is MenuSeparator =>
   'separator' in entry && entry.separator === true
+
+const isHeader = (entry: MenuEntry): entry is MenuHeader => 'header' in entry
 
 interface MenuContextValue {
   show(event: { clientX: number; clientY: number }, entries: MenuEntry[]): void
@@ -120,6 +127,10 @@ function MenuPanel({ x, y, entries, onClose }: PanelProps): JSX.Element {
         {entries.map((entry, index) =>
           isSeparator(entry) ? (
             <div key={index} className="context-sep" />
+          ) : isHeader(entry) ? (
+            <div key={index} className="context-header" onMouseEnter={() => setOpenSub(null)}>
+              {entry.header}
+            </div>
           ) : (
             <div
               key={index}
@@ -150,7 +161,7 @@ function MenuPanel({ x, y, entries, onClose }: PanelProps): JSX.Element {
       {openSub &&
         (() => {
           const entry = entries[openSub.index]
-          if (isSeparator(entry) || !entry.submenu) return null
+          if (isSeparator(entry) || isHeader(entry) || !entry.submenu) return null
           return (
             <MenuPanel
               x={openSub.x}
