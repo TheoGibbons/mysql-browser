@@ -734,6 +734,10 @@ table.grid th.gutter {
   z-index: 3;
 }
 
+table.grid th.select-all:hover {
+  background: #dbe9fb;
+}
+
 table.grid td {
   border-right: 1px solid var(--border-light);
   border-bottom: 1px solid var(--border-light);

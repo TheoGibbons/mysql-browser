@@ -139,6 +139,27 @@ export function ResultsGrid({
     [state.selection]
   )
 
+  // A select-all can hold every row, so membership is looked up, not scanned.
+  const selectedSet = useMemo(() => new Set(state.selection), [state.selection])
+  const allSelected = refs.length > 0 && refs.every((ref) => selectedSet.has(ref))
+
+  const toggleSelectAll = (): void =>
+    patch(allSelected ? { selection: [], anchor: null } : { selection: refs, anchor: refs[0] ?? null })
+
+  /**
+   * Shift extends a row selection. Left to the browser, it would also extend
+   * the text selection from wherever the last click landed, highlighting
+   * everything in between. Dragging still selects text.
+   */
+  const keepTextOnShift = (e: React.MouseEvent): void => {
+    if (e.button !== 0 || !e.shiftKey) return
+    e.preventDefault()
+    window.getSelection()?.removeAllRanges()
+    // preventDefault also keeps focus where it was; an open cell editor should
+    // still commit on blur, as it does for any other click.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+  }
+
   // --- editing ------------------------------------------------------------
 
   const commitEdit = useCallback(() => {
@@ -263,8 +284,8 @@ export function ResultsGrid({
 
   const rowMenu = (ref: RowRef, col: number | null): MenuEntry[] => {
     // Right-clicking outside the selection acts on the row under the cursor.
-    const targets = state.selection.includes(ref) ? state.selection : [ref]
-    const ordered = refs.filter((r) => targets.includes(r))
+    const targets = selectedSet.has(ref) ? selectedSet : new Set([ref])
+    const ordered = refs.filter((r) => targets.has(r))
     const label = ordered.length > 1 ? `${ordered.length} rows` : 'row'
 
     return [
@@ -352,6 +373,14 @@ export function ResultsGrid({
       className="grid-wrap"
       ref={scrollRef}
       onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
+      onMouseDown={(e) => {
+        // Only the blank space under the last row, not a click on its scrollbars.
+        const el = e.currentTarget
+        if (e.button !== 0 || e.target !== el) return
+        const box = el.getBoundingClientRect()
+        if (e.clientX - box.left >= el.clientWidth || e.clientY - box.top >= el.clientHeight) return
+        if (state.selection.length > 0) patch({ selection: [], anchor: null })
+      }}
     >
       <table className="grid" style={{ width: totalWidth }}>
         <colgroup>
@@ -366,7 +395,11 @@ export function ResultsGrid({
 
         <thead>
           <tr>
-            <th className="gutter" title={`${refs.length} row(s)`} />
+            <th
+              className="gutter select-all"
+              title={`${refs.length} row(s) · Click to ${allSelected ? 'deselect' : 'select'} all`}
+              onClick={toggleSelectAll}
+            />
             {result.columns.map((column, index) => (
               <th
                 key={index}
@@ -415,7 +448,7 @@ export function ResultsGrid({
             const displayIndex = first + sliceIndex
             const added = isAdded(ref)
             const deleted = !added && !!state.deleted[ref]
-            const selected = state.selection.includes(ref)
+            const selected = selectedSet.has(ref)
 
             return (
               <tr
@@ -431,10 +464,11 @@ export function ResultsGrid({
               >
                 <td
                   className="gutter"
+                  onMouseDown={keepTextOnShift}
                   onClick={(e) => selectRow(ref, e)}
                   onContextMenu={(e) => {
                     e.preventDefault()
-                    if (!state.selection.includes(ref)) patch({ selection: [ref], anchor: ref })
+                    if (!selectedSet.has(ref)) patch({ selection: [ref], anchor: ref })
                     menu.show(e, rowMenu(ref, null))
                   }}
                   title="Click to select · Shift/Ctrl for multiple"
@@ -477,6 +511,7 @@ export function ResultsGrid({
                         .join(' ')}
                       title={value === null ? 'NULL' : String(value)}
                       onMouseDown={(e) => {
+                        keepTextOnShift(e)
                         // Left-click a cell selects its row without stealing text selection.
                         if (e.button === 0 && e.detail === 1) selectRow(ref, e)
                       }}
@@ -486,7 +521,7 @@ export function ResultsGrid({
                       }}
                       onContextMenu={(e) => {
                         e.preventDefault()
-                        if (!state.selection.includes(ref)) patch({ selection: [ref], anchor: ref })
+                        if (!selectedSet.has(ref)) patch({ selection: [ref], anchor: ref })
                         menu.show(e, rowMenu(ref, col))
                       }}
                     >
