@@ -241,6 +241,12 @@ textarea {
   opacity: 0.4;
 }
 
+/* A toggle that is on stays sunk in, the way it looks while held down. */
+.toolbar-btn.pressed {
+  background: #c3dbf6;
+  border-color: #a9c6e8;
+}
+
 /* Solid red still reads as "live" at 0.4, so an idle Stop fades further. */
 .toolbar-btn.stop-btn:disabled {
   opacity: 0.2;

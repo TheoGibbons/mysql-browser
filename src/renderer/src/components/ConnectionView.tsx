@@ -42,7 +42,8 @@ import {
   ImportIcon,
   PlugIcon,
   SettingsIcon,
-  StopIcon
+  StopIcon,
+  WordWrapIcon
 } from './ui/Icons'
 
 interface Props {
@@ -588,7 +589,7 @@ interface TabContentProps {
   gridState: GridState
   patchGrid(patch: any): void
   updateGrid(fn: any): void
-  onLayout(patch: { resultsHeight?: number }): void
+  onLayout(patch: { resultsHeight?: number; wordWrap?: boolean }): void
   onLayoutCommit(): void
 }
 
@@ -703,6 +704,21 @@ function TabContent({
           >
             <BroomIcon />
           </button>
+          <button
+            className={conn.layout.wordWrap ? 'toolbar-btn pressed' : 'toolbar-btn'}
+            title={
+              conn.layout.wordWrap
+                ? 'Word wrap is on: click to turn it off'
+                : 'Word wrap is off: click to turn it on'
+            }
+            aria-pressed={conn.layout.wordWrap}
+            onClick={() => {
+              onLayout({ wordWrap: !conn.layout.wordWrap })
+              onLayoutCommit()
+            }}
+          >
+            <WordWrapIcon />
+          </button>
           <div className="spacer" />
           {isRunning && (
             <span className="hint">
@@ -730,6 +746,7 @@ function TabContent({
           failure={tab.failure ?? null}
           checkStatements={checkStatements}
           readOnly={annotating !== null}
+          wordWrap={conn.layout.wordWrap}
         />
       </div>
 

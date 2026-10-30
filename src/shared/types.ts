@@ -552,6 +552,8 @@ export interface SessionLayout {
   /** Height of the output console in a Data Export / Data Import tab. */
   transferLogHeight: number
   historyColumns: HistoryColumnWidths
+  /** Soft-wraps long lines in the query editor. */
+  wordWrap: boolean
 }
 
 /** Drag-resizable history columns. The status icon gutter is a fixed size. */
@@ -576,7 +578,8 @@ export const DEFAULT_LAYOUT: SessionLayout = {
   resultsHeight: 300,
   historyHeight: 160,
   transferLogHeight: 120,
-  historyColumns: { ...DEFAULT_HISTORY_COLUMNS }
+  historyColumns: { ...DEFAULT_HISTORY_COLUMNS },
+  wordWrap: true
 }
 
 // ---------------------------------------------------------------------------

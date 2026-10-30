@@ -98,6 +98,8 @@ interface Props {
    * run writes into the tab — Run and annotate's results — shows as it lands.
    */
   readOnly?: boolean
+  /** Soft-wraps long lines instead of scrolling sideways. On by default. */
+  wordWrap?: boolean
   /** Background tint for the editor, from the connection's colour. */
   background?: string
   /** Picks the grammar, the keyword set and the statement splitter. */
@@ -678,6 +680,7 @@ export function QueryEditor({
   defaultSchema,
   onNeedSchemaColumns,
   readOnly = false,
+  wordWrap = true,
   background,
   engine,
   failure,
@@ -689,6 +692,7 @@ export function QueryEditor({
   const debounceRef = useRef<number | null>(null)
   const langCompartment = useRef(new Compartment())
   const lockCompartment = useRef(new Compartment())
+  const wrapCompartment = useRef(new Compartment())
   const wasLocked = useRef(readOnly)
 
   // Handlers are read through a ref so re-created callbacks never rebuild the view.
@@ -762,7 +766,7 @@ export function QueryEditor({
           currentStatementHighlight,
           langCompartment.current.of(languageExtension),
           lockCompartment.current.of(EditorState.readOnly.of(readOnly)),
-          EditorView.lineWrapping,
+          wrapCompartment.current.of(wordWrap ? EditorView.lineWrapping : []),
           keymap.of([
             {
               key: 'Ctrl-Enter',
@@ -856,6 +860,14 @@ export function QueryEditor({
     if (!view) return
     view.dispatch({ effects: lockCompartment.current.reconfigure(EditorState.readOnly.of(readOnly)) })
   }, [readOnly])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({
+      effects: wrapCompartment.current.reconfigure(wordWrap ? EditorView.lineWrapping : [])
+    })
+  }, [wordWrap])
 
   // While locked, the tab's text is the source of truth. Followed one last time
   // on the render that unlocks, since a run's final write can land with it.

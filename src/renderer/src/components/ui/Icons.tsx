@@ -184,6 +184,23 @@ export const BroomIcon = ({ size = 14, color = '#6b8f3a' }: IconProps): JSX.Elem
     </>
   )
 
+/** Toggle soft wrapping: a line that runs to the edge and turns back under itself. */
+export const WordWrapIcon = ({ size = 14, color = '#3a3a3a' }: IconProps): JSX.Element =>
+  svg(
+    size,
+    <>
+      <path d="M2 3.4h12M2 12.6h4.4" stroke={color} strokeWidth="1.3" strokeLinecap="round" fill="none" />
+      <path
+        d="M2 8h9.6a2.3 2.3 0 0 1 0 4.6H8.6M10 11.2l-1.4 1.4L10 14"
+        stroke={color}
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+    </>
+  )
+
 export const ExportIcon = ({ size = 13, color = '#3a3a3a' }: IconProps): JSX.Element =>
   svg(
     size,
