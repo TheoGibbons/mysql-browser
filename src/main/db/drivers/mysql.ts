@@ -11,6 +11,7 @@ import type {
   StatementCheck,
   TableDefinition
 } from '@shared/types'
+import { mysqlDialect, qualify } from '@shared/dialect'
 import type { Driver, DriverConnection, DriverContext, RawResult } from '../driver'
 import {
   BINARY_CHARSET,
@@ -72,6 +73,17 @@ function namePosition(sql: string, name: string): number | null {
     if (match) return match.index + 1
   }
   return null
+}
+
+/**
+ * `SHOW CREATE TABLE` names the table (or view) without its schema, so pasting
+ * the DDL into another schema's tab would create it there. The name is swapped
+ * for the qualified one the statement was asked about.
+ */
+function qualifyCreate(ddl: string, schema: string, table: string): string {
+  const match = /^(CREATE\b[^\n]*?\b(?:TABLE|VIEW)\s+)(`(?:[^`]|``)*`|[^\s(.`]+)(?=[\s(])/.exec(ddl)
+  if (!match) return ddl
+  return match[1] + qualify(mysqlDialect, schema, table) + ddl.slice(match[0].length)
 }
 
 /** Small payloads inline as hex; anything larger is described, not dumped. */
@@ -617,7 +629,7 @@ export class MysqlDriver implements Driver {
     const result = await conn.query(
       `SHOW CREATE TABLE \`${schema.replace(/`/g, '``')}\`.\`${String(table).replace(/`/g, '``')}\``
     )
-    return String(result.rows[0]?.[1] ?? '')
+    return qualifyCreate(String(result.rows[0]?.[1] ?? ''), schema, String(table))
   }
 
   async charsets(conn: DriverConnection): Promise<{ charset: string; collations: string[] }[]> {
