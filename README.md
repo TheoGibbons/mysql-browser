@@ -159,9 +159,9 @@ gh secret set EC2_KNOWN_HOSTS     --env production \
 The deploy stops rather than overwrite tracked files edited directly on the
 server. Commit through Git instead of letting the live and local copies drift.
 
-A push deploys with the `scripts/deploy.sh` already on the server, which then
-pulls. A change to the script itself therefore takes effect from the deploy after
-the one that ships it.
+A push deploys with the `scripts/deploy.sh` already on the server, which pulls
+and starts over on the new copy when the pull changed it. A change to the script
+itself therefore takes effect on the deploy that ships it.
 
 `.github/workflows/release.yml` builds on `windows-latest`, signs through Azure
 Artifact Signing using GitHub OIDC, and publishes with the automatic
