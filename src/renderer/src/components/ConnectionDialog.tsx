@@ -164,9 +164,7 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
     }
   }
 
-  const [fetchingCa, setFetchingCa] = useState(false)
   const sslOn = config.method === 'iam' || (config.useSSL ?? false)
-  const isRdsHost = /\.rds\.amazonaws\.com(\.cn)?$/i.test(config.host.trim())
 
   const browseCaFile = async (): Promise<void> => {
     const file = await window.api.dialog.openFile('Select CA certificate bundle', [
@@ -174,19 +172,6 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
       { name: 'All files', extensions: ['*'] }
     ])
     if (file) patch({ sslCaFile: file })
-  }
-
-  /** Fetches Amazon's RDS CA bundle and turns on full verification against it. */
-  const useRdsCa = async (): Promise<void> => {
-    setFetchingCa(true)
-    try {
-      const file = await window.api.certs.downloadRdsBundle()
-      patch({ sslCaFile: file, useSSL: true, rejectUnauthorized: true })
-    } catch (err) {
-      setTestResult({ tone: 'error', message: (err as Error).message })
-    } finally {
-      setFetchingCa(false)
-    }
   }
 
   const browseKeyFile = async (): Promise<void> => {
@@ -519,20 +504,11 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
             >
               …
             </button>
-            <button
-              className="btn"
-              style={{ height: 22 }}
-              disabled={!sslOn || fetchingCa}
-              onClick={useRdsCa}
-              title="Download Amazon's CA bundle for every RDS and Aurora region and verify against it"
-            >
-              {fetchingCa ? 'Downloading…' : 'Get Amazon RDS CA'}
-            </button>
           </div>
           <span className="hint">
-            {sslOn && isRdsHost && !config.sslCaFile?.trim() && config.rejectUnauthorized !== false
-              ? 'This is an AWS RDS host, whose certificate is signed by an Amazon CA your machine does not trust. Click "Get Amazon RDS CA" so it can be verified.'
-              : 'PEM file of CAs to trust when verifying the server. Leave blank to use the system trust store.'}
+            PEM file of CAs to trust when verifying the server - managed services such as AWS RDS
+            sign with their own CA, published by the provider. Leave blank to use the system trust
+            store.
           </span>
         </div>
       </fieldset>

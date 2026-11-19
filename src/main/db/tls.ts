@@ -32,7 +32,7 @@ export function explainTlsError(err: any, config: ConnectionConfig): any {
   const hint = config.sslCaFile?.trim()
     ? `The server's certificate was not signed by any CA in "${config.sslCaFile}". Check it is the right bundle for this server.`
     : 'The server presented a certificate from a CA this machine does not trust. Set "CA Certificate" ' +
-      'in the connection settings to the provider\'s CA bundle (for AWS RDS, use "Get Amazon RDS CA"), ' +
+      "in the connection settings to the provider's CA bundle (for AWS RDS, Amazon's global-bundle.pem), " +
       'or untick "Verify server certificate".'
   err.message = `${err.message}\n\n${hint}`
   if (typeof err.sqlMessage === 'string') err.sqlMessage = err.message
