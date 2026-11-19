@@ -25,6 +25,7 @@ import type {
 } from '@shared/types'
 import type { Driver, DriverConnection, DriverContext, RawResult } from '../driver'
 import { pgCreateTable } from '@shared/pgDdl'
+import { explainTlsError, readCaFile } from '../tls'
 
 const { Client, types: pgTypes } = pg
 
@@ -228,7 +229,13 @@ export class PostgresDriver implements Driver {
         application_name: 'MySQL Browser',
         types: passthroughTypes,
         ssl: config.useSSL
-          ? { rejectUnauthorized: config.rejectUnauthorized !== false }
+          ? {
+              rejectUnauthorized: config.rejectUnauthorized !== false,
+              ca: readCaFile(config),
+              // Through a tunnel the socket goes to 127.0.0.1, but the
+              // certificate names the real host — check it against that.
+              servername: tunnel && config.host ? config.host : undefined
+            }
           : undefined
       })
 
@@ -238,9 +245,13 @@ export class PostgresDriver implements Driver {
     } catch (err: any) {
       // `28P01 invalid_password` after a stale IAM token: mint a new one and
       // try once more before reporting a credentials failure.
-      if (err?.code !== '28P01' || !(await this.ctx.refreshPassword())) throw err
+      if (err?.code !== '28P01' || !(await this.ctx.refreshPassword())) {
+        throw explainTlsError(err, config)
+      }
       client = await build()
-      await client.connect()
+      await client.connect().catch((retryErr) => {
+        throw explainTlsError(retryErr, config)
+      })
     }
 
     const connection = new PostgresConnection(

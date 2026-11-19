@@ -42,6 +42,7 @@ function blankConnection(): ConnectionConfig {
     iamTokenCommand: '',
     useSSL: false,
     rejectUnauthorized: true,
+    sslCaFile: '',
     color: '',
     confirmModifying: false,
     createdAt: Date.now()
@@ -160,6 +161,31 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
       testIdRef.current = null
       stoppingRef.current = false
       setTesting(false)
+    }
+  }
+
+  const [fetchingCa, setFetchingCa] = useState(false)
+  const sslOn = config.method === 'iam' || (config.useSSL ?? false)
+  const isRdsHost = /\.rds\.amazonaws\.com(\.cn)?$/i.test(config.host.trim())
+
+  const browseCaFile = async (): Promise<void> => {
+    const file = await window.api.dialog.openFile('Select CA certificate bundle', [
+      { name: 'Certificates', extensions: ['pem', 'crt', 'cer'] },
+      { name: 'All files', extensions: ['*'] }
+    ])
+    if (file) patch({ sslCaFile: file })
+  }
+
+  /** Fetches Amazon's RDS CA bundle and turns on full verification against it. */
+  const useRdsCa = async (): Promise<void> => {
+    setFetchingCa(true)
+    try {
+      const file = await window.api.certs.downloadRdsBundle()
+      patch({ sslCaFile: file, useSSL: true, rejectUnauthorized: true })
+    } catch (err) {
+      setTestResult({ tone: 'error', message: (err as Error).message })
+    } finally {
+      setFetchingCa(false)
     }
   }
 
@@ -470,8 +496,43 @@ export function ConnectionDialog({ initial, onClose, onSaved }: Props): JSX.Elem
           </div>
           <span className="hint">
             {config.method === 'iam'
-              ? 'Always on for AWS IAM - the token is only accepted over TLS. Leave verification off unless you have added the Amazon RDS CA to your machine.'
+              ? 'Always on for AWS IAM - the token is only accepted over TLS. To verify the server, set the CA certificate below.'
               : `Required by most managed ${serverName} services.`}
+          </span>
+
+          <label>CA Certificate:</label>
+          <div className="row" style={{ gap: 6, opacity: sslOn ? 1 : 0.45 }}>
+            <input
+              className="field"
+              style={{ flex: 1 }}
+              disabled={!sslOn}
+              placeholder="System trust store"
+              value={config.sslCaFile ?? ''}
+              title={config.sslCaFile || undefined}
+              onChange={(e) => patch({ sslCaFile: e.target.value })}
+            />
+            <button
+              className="btn"
+              style={{ minWidth: 34, height: 22 }}
+              disabled={!sslOn}
+              onClick={browseCaFile}
+            >
+              …
+            </button>
+            <button
+              className="btn"
+              style={{ height: 22 }}
+              disabled={!sslOn || fetchingCa}
+              onClick={useRdsCa}
+              title="Download Amazon's CA bundle for every RDS and Aurora region and verify against it"
+            >
+              {fetchingCa ? 'Downloading…' : 'Get Amazon RDS CA'}
+            </button>
+          </div>
+          <span className="hint">
+            {sslOn && isRdsHost && !config.sslCaFile?.trim() && config.rejectUnauthorized !== false
+              ? 'This is an AWS RDS host, whose certificate is signed by an Amazon CA your machine does not trust. Click "Get Amazon RDS CA" so it can be verified.'
+              : 'PEM file of CAs to trust when verifying the server. Leave blank to use the system trust store.'}
           </span>
         </div>
       </fieldset>

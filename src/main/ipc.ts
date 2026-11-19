@@ -1,6 +1,6 @@
 /** IPC surface exposed to the renderer through the preload bridge. */
 
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net, shell } from 'electron'
 import type {
   ConnectionConfig,
   ConnectionGroup,
@@ -23,6 +23,8 @@ import {
   type ToolRunRequest
 } from './tools'
 import { check, getUpdateState, installNow } from './updater'
+
+const RDS_CA_BUNDLE_URL = 'https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem'
 
 /** Live sessions, keyed by connection *tab* id — several may share a connectionId. */
 const sessions = new Map<string, Session>()
@@ -264,6 +266,25 @@ export function registerIpc(): void {
       return result.canceled ? null : result.filePaths[0]
     }
   )
+
+  // Amazon signs every RDS/Aurora server certificate with its own CA, which no
+  // OS trust store carries. Fetch the bundle covering every region into
+  // userData so connections can point at a stable path.
+  handle('certs:downloadRdsBundle', async () => {
+    const fsp = await import('node:fs/promises')
+    const path = await import('node:path')
+    const res = await net.fetch(RDS_CA_BUNDLE_URL)
+    if (!res.ok) throw new Error(`Downloading the RDS CA bundle failed: HTTP ${res.status}`)
+    const pem = await res.text()
+    if (!pem.includes('-----BEGIN CERTIFICATE-----')) {
+      throw new Error('The RDS CA bundle download did not contain any certificates.')
+    }
+    const dir = path.join(store.userDataPath(), 'certs')
+    await fsp.mkdir(dir, { recursive: true })
+    const file = path.join(dir, 'rds-global-bundle.pem')
+    await fsp.writeFile(file, pem, 'utf8')
+    return file
+  })
 
   handle('dialog:openDirectory', async (title: string, defaultPath?: string) => {
     const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]

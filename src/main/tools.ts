@@ -346,8 +346,17 @@ export async function runTool(
       const pgpass = await writeSecretFile('pgpass', pgpassFile(password))
       cleanup.push(() => fsp.rm(pgpass, { force: true }).catch(() => undefined))
       env.PGPASSFILE = pgpass
-      if (config.useSSL) env.PGSSLMODE = config.rejectUnauthorized === false ? 'require' : 'verify-full'
-      info(`PGPASSFILE=${pgpass}${env.PGSSLMODE ? ` PGSSLMODE=${env.PGSSLMODE}` : ''}`)
+      if (config.useSSL) {
+        // Through the SSH tunnel libpq connects to 127.0.0.1, which the
+        // certificate will not name, so only the chain can be checked there.
+        const verify = config.method === 'ssh' ? 'verify-ca' : 'verify-full'
+        env.PGSSLMODE = config.rejectUnauthorized === false ? 'require' : verify
+        if (config.sslCaFile?.trim()) env.PGSSLROOTCERT = config.sslCaFile.trim()
+      }
+      info(
+        `PGPASSFILE=${pgpass}${env.PGSSLMODE ? ` PGSSLMODE=${env.PGSSLMODE}` : ''}` +
+          (env.PGSSLROOTCERT ? ` PGSSLROOTCERT=${env.PGSSLROOTCERT}` : '')
+      )
     }
 
     // --- tunnel ----------------------------------------------------------

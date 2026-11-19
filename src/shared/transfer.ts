@@ -382,6 +382,7 @@ export function buildMysqlExport(ctx: BuildContext): string {
   // authentication plugin, protected by TLS even when useSSL is unset.
   if (config.method === 'iam') args.push('--enable-cleartext-plugin')
   if (config.useSSL || config.method === 'iam') args.push('--ssl-mode=REQUIRED')
+  if (config.sslCaFile?.trim()) args.push(pathOpt('ssl-ca', config.sslCaFile.trim()))
   if (state.skipColumnStatistics) args.push('--column-statistics=FALSE')
 
   if (state.contents === 'data-only') args.push('--no-create-info')
@@ -446,6 +447,7 @@ export function buildMysqlImport(ctx: BuildContext): string {
   args.push('--protocol=tcp')
   if (config.method === 'iam') args.push('--enable-cleartext-plugin')
   if (config.useSSL || config.method === 'iam') args.push('--ssl-mode=REQUIRED')
+  if (config.sslCaFile?.trim()) args.push(pathOpt('ssl-ca', config.sslCaFile.trim()))
   if (state.force) args.push('--force')
   if (state.targetSchema) args.push(quoteArg(state.targetSchema))
 

@@ -183,6 +183,11 @@ const api = {
       call<string | null>('dialog:saveFile', title, defaultPath, filters)
   },
 
+  certs: {
+    /** Downloads Amazon's RDS CA bundle and resolves with the path it was saved to. */
+    downloadRdsBundle: () => call<string>('certs:downloadRdsBundle')
+  },
+
   files: {
     write: (filePath: string, contents: string) => call<void>('shell:writeFile', filePath, contents),
     read: (filePath: string) => call<string>('shell:readFile', filePath),

@@ -47,6 +47,12 @@ export interface ConnectionConfig {
   // --- SSL ---
   useSSL?: boolean
   rejectUnauthorized?: boolean
+  /**
+   * PEM file of extra CAs to trust when verifying the server — e.g. Amazon's
+   * RDS bundle, which is not in Node's (or most machines') trust store. A path,
+   * not a secret, so it is stored and exported in plaintext like `sshKeyFile`.
+   */
+  sslCaFile?: string
 
   /** Per-connection preference overrides. Unset keys fall back to the global prefs. */
   prefs?: Partial<Preferences>

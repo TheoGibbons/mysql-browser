@@ -13,6 +13,7 @@ import type {
 } from '@shared/types'
 import { mysqlDialect, qualify } from '@shared/dialect'
 import type { Driver, DriverConnection, DriverContext, RawResult } from '../driver'
+import { explainTlsError, readCaFile } from '../tls'
 import {
   BINARY_CHARSET,
   FLAG_AUTO_INCREMENT,
@@ -261,7 +262,8 @@ export class MysqlDriver implements Driver {
       // RDS presents an Amazon CA that is not in Node's trust store, so IAM
       // connections only verify when the user has asked for it deliberately.
       options.ssl = {
-        rejectUnauthorized: config.useSSL ? config.rejectUnauthorized !== false : false
+        rejectUnauthorized: config.useSSL ? config.rejectUnauthorized !== false : false,
+        ca: readCaFile(config)
       }
     }
 
@@ -273,6 +275,7 @@ export class MysqlDriver implements Driver {
    * out what is left to check once the token itself has been generated.
    */
   private decorateError(err: any): any {
+    explainTlsError(err, this.ctx.config)
     if (this.ctx.config.method !== 'iam' || err?.code !== 'ER_ACCESS_DENIED_ERROR') return err
     const message =
       `${err.sqlMessage || err.message}\n\n` +
