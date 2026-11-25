@@ -2066,6 +2066,19 @@ table.editgrid input[type='checkbox'] {
   padding: 2px 0 4px;
 }
 
+/* A control with a small button beside it, such as a refresh icon. */
+.field-with-action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field-with-action > .field {
+  flex: 1;
+  min-width: 0;
+}
+
 /* -------- the command and the run console -------- */
 
 /* Shrinkable, but only through the console: everything else is fixed. */

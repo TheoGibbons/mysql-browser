@@ -19,6 +19,7 @@ import { runKey, useAppStore, useTransferStore, type ConnTab } from '../store'
 import { ConfirmModifyModal } from './ConfirmModifyModal'
 import { TransferObjects } from './TransferObjects'
 import { TransferRunner } from './TransferRunner'
+import { RefreshIcon } from './ui/Icons'
 
 interface Props {
   conn: ConnTab
@@ -626,19 +627,34 @@ export function ExportImportTab({ conn, tab }: Props): JSX.Element {
       <fieldset className="group">
         <legend>Target</legend>
         <Field label="Default schema:">
-          <select
-            className="field"
-            value={state.targetSchema}
-            disabled={running}
-            onChange={(e) => patch({ targetSchema: e.target.value })}
-          >
-            <option value="">Use the schema named in the dump</option>
-            {schemaOptions.map((name) => (
-              <option key={name} value={name}>
-                {name}
-              </option>
-            ))}
-          </select>
+          <div className="field-with-action">
+            <select
+              className="field"
+              value={state.targetSchema}
+              disabled={running}
+              onChange={(e) => patch({ targetSchema: e.target.value })}
+            >
+              <option value="">Use the schema named in the dump</option>
+              {schemaOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="icon-btn"
+              title={
+                conn.status === 'connected'
+                  ? 'Refresh schemas and tables'
+                  : 'Connect to refresh the schema list'
+              }
+              disabled={conn.status !== 'connected' || conn.schemasLoading}
+              onClick={() => void refreshSchemas(conn.sessionId, true)}
+            >
+              <RefreshIcon />
+            </button>
+          </div>
         </Field>
         <div className="prefs-hint" style={{ margin: '4px 0 0' }}>
           A dump written with <em>Include Create Schema</em> chooses its own schema and needs no
